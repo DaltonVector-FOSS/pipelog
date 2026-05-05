@@ -2,6 +2,11 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+const DEFAULT_WEB_URL: &str = "https://pipelog-8a15f.web.app";
+const LEGACY_WEB_URLS: [&str; 2] = ["http://localhost:5174", "http://localhost:5173"];
+const DEFAULT_API_URL: &str = "https://api.pipelog.daltonvector.ai";
+const LEGACY_API_URLS: [&str; 2] = ["http://localhost:3001", "http://127.0.0.1:3001"];
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub api_url: String,
@@ -13,8 +18,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            api_url: "http://localhost:3001".to_string(),
-            web_url: "http://localhost:5174".to_string(),
+            api_url: DEFAULT_API_URL.to_string(),
+            web_url: DEFAULT_WEB_URL.to_string(),
             auth_token: None,
             default_workspace: None,
         }
@@ -34,7 +39,13 @@ pub fn load() -> Result<Config> {
         return Ok(Config::default());
     }
     let contents = std::fs::read_to_string(&path)?;
-    let config: Config = serde_json::from_str(&contents)?;
+    let mut config: Config = serde_json::from_str(&contents)?;
+    if LEGACY_API_URLS.contains(&config.api_url.as_str()) {
+        config.api_url = DEFAULT_API_URL.to_string();
+    }
+    if LEGACY_WEB_URLS.contains(&config.web_url.as_str()) {
+        config.web_url = DEFAULT_WEB_URL.to_string();
+    }
     Ok(config)
 }
 
