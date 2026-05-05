@@ -26,6 +26,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
       PORT: ${API_PORT:-3001}
       WEB_URL: ${WEB_URL:-http://localhost:5173}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
     ports:
       - "${API_PORT:-3001}:${API_PORT:-3001}"
     depends_on:
@@ -41,6 +42,7 @@ services:
       dockerfile: Dockerfile
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
+      VITE_PROXY_TARGET: ${VITE_PROXY_TARGET:-http://api:3001}
     ports:
       - "${WEB_PORT:-5173}:5173"
     volumes:

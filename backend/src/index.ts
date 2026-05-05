@@ -11,9 +11,13 @@ import { registerErrorHandler } from './middleware/errorHandler';
 
 const app = Fastify({ logger: true });
 
+const corsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
+  : (process.env.WEB_URL ?? 'http://localhost:5173');
+
 // Plugins
 app.register(cors, {
-  origin: process.env.WEB_URL ?? 'http://localhost:5173',
+  origin: corsOrigins,
   credentials: true,
 });
 

@@ -4,8 +4,6 @@ import { formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
 import { api, useAuthStore, type Entry } from '../api';
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
-
 export function Dashboard() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
