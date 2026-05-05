@@ -9,6 +9,19 @@ use std::time::Duration;
 
 const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024; // 10MB
 
+/// Strip leading byte-order marks. PowerShell 5.1 will sometimes prepend UTF-8 / UTF-16 BOMs
+/// when piping to a native binary, which would make `output.trim().is_empty()` falsely false
+/// or look like a single garbage character in the captured entry.
+fn strip_bom(buf: &[u8]) -> &[u8] {
+    if buf.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &buf[3..]
+    } else if buf.starts_with(&[0xFF, 0xFE]) || buf.starts_with(&[0xFE, 0xFF]) {
+        &buf[2..]
+    } else {
+        buf
+    }
+}
+
 fn sanitize_command_candidate(cmd: &str) -> Option<String> {
     let mut s = cmd
         .trim()
@@ -174,10 +187,77 @@ fn join_process_cmd(cmd: &[std::ffi::OsString]) -> String {
         .join(" ")
 }
 
-/// Windows has no `ps`; read the parent (and sibling) command lines via `sysinfo`.
+/// Detect a `cmd.exe /S /D /c "<inner>"` wrapper and return `<inner>` (the actual command
+/// the shell ran for one side of a pipeline).
+#[cfg(windows)]
+fn extract_cmd_c_payload(cmd: &str) -> Option<String> {
+    let trimmed = cmd.trim_start();
+    let lower = trimmed.to_lowercase();
+
+    let is_cmd_exe = lower.starts_with("cmd ")
+        || lower.starts_with("cmd.exe ")
+        || lower == "cmd"
+        || lower == "cmd.exe"
+        || lower.starts_with("\"cmd")
+        || lower.contains("\\cmd.exe ")
+        || lower.contains("/cmd.exe ");
+    if !is_cmd_exe {
+        return None;
+    }
+
+    // Find the `/c` (or `/k`) flag, case-insensitively, with surrounding whitespace.
+    let bytes = trimmed.as_bytes();
+    let lower_bytes = lower.as_bytes();
+    let mut i = 0;
+    while i + 2 < bytes.len() {
+        let prev_ws = i == 0 || (bytes[i - 1] as char).is_whitespace();
+        if prev_ws
+            && bytes[i] == b'/'
+            && (lower_bytes[i + 1] == b'c' || lower_bytes[i + 1] == b'k')
+            && (i + 2 == bytes.len() || (bytes[i + 2] as char).is_whitespace())
+        {
+            let rest = trimmed[i + 2..].trim_start();
+            // Strip ONE pair of surrounding quotes (cmd's `/c " ... "` form).
+            let rest = if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
+                &rest[1..rest.len() - 1]
+            } else {
+                rest
+            };
+            let rest = rest.trim();
+            if rest.is_empty() {
+                return None;
+            }
+            return Some(rest.to_string());
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Heuristic: this command line looks like just an interactive shell (no inline pipeline),
+/// so we cannot recover the user's command from it.
+#[cfg(windows)]
+fn cmdline_looks_like_bare_shell(cmd: &str) -> bool {
+    let lower = cmd.trim().to_lowercase();
+    // Bare interactive shells: "cmd.exe", "powershell.exe", "pwsh.exe", possibly with a path.
+    let last = lower.rsplit('\\').next().unwrap_or(&lower).to_string();
+    matches!(
+        last.as_str(),
+        "cmd" | "cmd.exe" | "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe"
+    )
+}
+
+/// Windows has no `ps`. We have to walk the process tree:
+///   1. Parent's command line might already contain the pipeline (PowerShell external chains).
+///   2. CMD wraps each side of `a | b` in its own `cmd /c " ... "` child, so the sibling of our
+///      parent (under the grandparent shell) holds the producer command. Walk up + scan descendants.
 #[cfg(windows)]
 fn infer_command_windows() -> Option<String> {
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+    fn cmd_line_for(proc: &Process) -> String {
+        join_process_cmd(proc.cmd())
+    }
 
     let mut sys = System::new();
     let my_pid = Pid::from_u32(std::process::id());
@@ -189,49 +269,68 @@ fn infer_command_windows() -> Option<String> {
 
     let parent_pid = sys.process(my_pid)?.parent()?;
 
+    // (1) Parent's own command line: works when the shell embedded the whole pipeline
+    // (e.g. PowerShell run as `powershell -Command "dir | pipelog"` — though rare interactively).
     if let Some(parent_proc) = sys.process(parent_pid) {
-        let parent_cmd = join_process_cmd(parent_proc.cmd());
+        let parent_cmd = cmd_line_for(parent_proc);
         if let Some(cmd) = extract_command_before_pipelog_in_pipeline(&parent_cmd) {
             return Some(cmd);
         }
     }
 
-    let mut candidates: Vec<String> = Vec::new();
-    for (pid, proc) in sys.processes() {
-        if *pid == my_pid {
-            continue;
-        }
-        if proc.parent() != Some(parent_pid) {
-            continue;
-        }
+    // (2) Walk up the ancestor chain so we can find the sibling of any wrapper that holds the
+    // producer side. Stop at obviously-uninformative roots.
+    let mut chain: Vec<Pid> = vec![parent_pid];
+    let mut cur = parent_pid;
+    for _ in 0..6 {
+        let Some(p) = sys.process(cur).and_then(|p| p.parent()) else {
+            break;
+        };
+        chain.push(p);
+        cur = p;
+    }
 
-        let cmd_joined = join_process_cmd(proc.cmd());
-        if cmd_joined.is_empty() {
-            continue;
-        }
-        if cmd_joined.to_lowercase().contains("pipelog") {
-            continue;
-        }
+    // For each ancestor, scan its children that are NOT in our parent chain. These are siblings
+    // of (a wrapper of) us — i.e. the other sides of the pipeline.
+    for ancestor in chain.iter() {
+        for (pid, proc) in sys.processes() {
+            if *pid == my_pid || chain.contains(pid) {
+                continue;
+            }
+            if proc.parent() != Some(*ancestor) {
+                continue;
+            }
 
-        let name_lower = proc.name().to_string_lossy().to_lowercase();
-        if matches!(
-            name_lower.as_str(),
-            "cmd.exe"
-                | "powershell.exe"
-                | "pwsh.exe"
-                | "conhost.exe"
-                | "windowsterminal.exe"
-                | "wt.exe"
-        ) {
-            continue;
-        }
+            let raw_cmd = cmd_line_for(proc);
+            if raw_cmd.is_empty() {
+                continue;
+            }
+            if raw_cmd.to_lowercase().contains("pipelog") {
+                continue;
+            }
 
-        if let Some(cleaned) = sanitize_command_candidate(&cmd_joined) {
-            candidates.push(cleaned);
+            // Unwrap `cmd /c " <real> "` so we report `<real>` instead of the wrapper.
+            let unwrapped = extract_cmd_c_payload(&raw_cmd).unwrap_or(raw_cmd.clone());
+
+            if cmdline_looks_like_bare_shell(&unwrapped) {
+                continue;
+            }
+            if unwrapped.to_lowercase().contains("pipelog") {
+                continue;
+            }
+
+            // The unwrapped cmd may itself be a pipeline ("a | b | pipelog") if the ancestor
+            // is the original interactive shell with the whole line embedded.
+            if let Some(cmd) = extract_command_before_pipelog_in_pipeline(&unwrapped) {
+                return Some(cmd);
+            }
+            if let Some(cleaned) = sanitize_command_candidate(&unwrapped) {
+                return Some(cleaned);
+            }
         }
     }
 
-    candidates.into_iter().next()
+    None
 }
 
 #[cfg(unix)]
@@ -403,10 +502,38 @@ pub async fn run_capture(
         buf.truncate(MAX_OUTPUT_BYTES);
     }
 
-    let output = String::from_utf8_lossy(&buf).to_string();
+    // Strip a leading UTF-8 / UTF-16 BOM that some shells (notably PowerShell 5.1) prepend.
+    let buf = strip_bom(&buf);
+    let output = String::from_utf8_lossy(buf).to_string();
 
     if output.trim().is_empty() {
-        eprintln!("{}", "No output to capture.".dimmed());
+        eprintln!(
+            "{} {}",
+            "✗".red().bold(),
+            "Nothing was piped to pipelog.".yellow()
+        );
+        #[cfg(windows)]
+        {
+            eprintln!(
+                "{}",
+                "  PowerShell tip: Write-Host bypasses the pipeline.".dimmed()
+            );
+            eprintln!(
+                "{}",
+                "  Capture errors too: `your-script *>&1 | pipelog` (all streams)".dimmed()
+            );
+            eprintln!(
+                "{}",
+                "             or:    `your-script 2>&1 | pipelog` (stderr only)".dimmed()
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            eprintln!(
+                "{}",
+                "  Tip: include stderr with `your-cmd 2>&1 | pipelog`.".dimmed()
+            );
+        }
         return Ok(());
     }
 
@@ -465,10 +592,112 @@ pub async fn run_capture(
         }
         Err(e) => {
             spinner.finish_and_clear();
-            eprintln!("{} Failed to save: {}", "✗".red(), e);
-            // Still exit 0 so we don't break pipelines
+            eprintln!();
+            eprintln!(
+                "{} {}",
+                "✗".red().bold(),
+                "Failed to save to Pipelog.".red()
+            );
+            eprintln!("  {} {}", "reason:".dimmed(), e);
+            eprintln!(
+                "  {} {}",
+                "hint:".dimmed(),
+                "check `pipelog auth status` and your network connection".dimmed()
+            );
+            // Still exit 0 so we don't break pipelines.
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pipe_segment_recognizes_pipelog_variants() {
+        assert!(pipe_segment_invokes_pipelog(" pipelog "));
+        assert!(pipe_segment_invokes_pipelog("pipelog --tag x"));
+        assert!(pipe_segment_invokes_pipelog("/usr/local/bin/pipelog"));
+        assert!(pipe_segment_invokes_pipelog("./target/release/pipelog"));
+        assert!(pipe_segment_invokes_pipelog(r"C:\tools\pipelog.exe"));
+        assert!(pipe_segment_invokes_pipelog(r#""C:\tools\pipelog.exe""#));
+        assert!(pipe_segment_invokes_pipelog("& pipelog.exe"));
+        assert!(!pipe_segment_invokes_pipelog("git status"));
+        assert!(!pipe_segment_invokes_pipelog(""));
+    }
+
+    #[test]
+    fn extracts_command_before_pipelog_in_full_pipeline() {
+        let s = "git log --oneline | pipelog --tag git";
+        assert_eq!(
+            extract_command_before_pipelog_in_pipeline(s).as_deref(),
+            Some("git log --oneline")
+        );
+
+        let win = r#"dir | "C:\Users\me\.local\bin\pipelog.exe""#;
+        assert_eq!(
+            extract_command_before_pipelog_in_pipeline(win).as_deref(),
+            Some("dir")
+        );
+
+        let no_pipelog = "echo hi | grep h";
+        assert!(extract_command_before_pipelog_in_pipeline(no_pipelog).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unwraps_cmd_c_wrapper() {
+        // sysinfo joins argv with spaces; cmd's `/c " dir "` shows up like this:
+        assert_eq!(
+            extract_cmd_c_payload(r#"cmd.exe /S /D /c " dir ""#).as_deref(),
+            Some("dir")
+        );
+        assert_eq!(
+            extract_cmd_c_payload("cmd.exe /S /D /c  dir ").as_deref(),
+            Some("dir")
+        );
+        assert_eq!(
+            extract_cmd_c_payload(r#"C:\Windows\System32\cmd.exe /c "git status""#).as_deref(),
+            Some("git status")
+        );
+        // The right side wrapper points at pipelog itself; we still unwrap, but the caller
+        // filters that out by name.
+        assert_eq!(
+            extract_cmd_c_payload(r#"cmd.exe /S /D /c " pipelog ""#).as_deref(),
+            Some("pipelog")
+        );
+        // Not cmd at all → no unwrap.
+        assert!(extract_cmd_c_payload("git status").is_none());
+        // /k (keep open) form, occasionally used.
+        assert_eq!(
+            extract_cmd_c_payload(r#"cmd.exe /k "echo hi""#).as_deref(),
+            Some("echo hi")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cmd_c_with_inner_pipeline_is_recoverable() {
+        // Some shells embed the entire pipeline inside `/c`. Unwrap, then run pipeline parser.
+        let inner = extract_cmd_c_payload(r#"cmd.exe /c "git log | pipelog --tag g""#).unwrap();
+        assert_eq!(
+            extract_command_before_pipelog_in_pipeline(&inner).as_deref(),
+            Some("git log")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bare_shell_detection() {
+        assert!(cmdline_looks_like_bare_shell("cmd.exe"));
+        assert!(cmdline_looks_like_bare_shell(
+            r"C:\Windows\System32\cmd.exe"
+        ));
+        assert!(cmdline_looks_like_bare_shell("powershell.exe"));
+        assert!(cmdline_looks_like_bare_shell("pwsh.exe"));
+        assert!(!cmdline_looks_like_bare_shell("cmd.exe /c dir"));
+        assert!(!cmdline_looks_like_bare_shell("git status"));
+    }
 }

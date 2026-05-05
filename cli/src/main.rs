@@ -2,6 +2,7 @@ mod api;
 mod auth;
 mod capture;
 mod config;
+mod runner;
 
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -17,7 +18,7 @@ struct Cli {
     command: Option<Commands>,
 
     /// Entry title (when piping)
-    #[arg(short, long)]
+    #[arg(short = 'T', long)]
     title: Option<String>,
 
     /// Tags (can be used multiple times)
@@ -95,6 +96,21 @@ enum Commands {
         #[arg(default_value = "zsh")]
         shell: String,
     },
+    /// Run a command, stream output live, and capture everything from start to end
+    Run {
+        /// Entry title (defaults to the command line)
+        #[arg(short = 'T', long = "title")]
+        title: Option<String>,
+        /// Tags
+        #[arg(short = 't', long = "tag")]
+        tags: Vec<String>,
+        /// Share publicly on save
+        #[arg(short, long)]
+        share: bool,
+        /// The command to run (use -- to separate flags from the command)
+        #[arg(trailing_var_arg = true, required = true, num_args = 1..)]
+        argv: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -155,6 +171,15 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Init { shell }) => {
             print_shell_init(&shell)?;
         }
+        Some(Commands::Run {
+            title,
+            tags,
+            share,
+            argv,
+        }) => {
+            let code = runner::run_command(argv, title, tags, share).await?;
+            std::process::exit(code);
+        }
     }
 
     Ok(())
@@ -204,9 +229,74 @@ pipelog() {
 "#;
             println!("{}", snippet);
         }
+        "powershell" | "pwsh" => {
+            // PowerShell pipelines like `Get-ChildItem | pipelog` run entirely inside one
+            // pwsh process, so we cannot recover the producer via process inspection. We use
+            // PSReadLine's history hook as a "preexec" equivalent and stash the command in
+            // $env:PIPELOG_LAST_COMMAND, then a wrapper function injects --cmd.
+            //
+            // We deliberately avoid [CmdletBinding] / a $Args parameter (which collides with
+            // PowerShell's automatic $args variable). The wrapper just splats $args.
+            //
+            // We also force UTF-8 output encoding so pipelog receives clean bytes from
+            // PowerShell 5.1 (which otherwise pipes ASCII-with-replacement to native exes).
+            let snippet = r#"# pipelog shell integration (PowerShell 5.1+ / pwsh 7+)
+try { $OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
+$env:PIPELOG_LAST_COMMAND = ''
+
+if (Get-Module -ListAvailable -Name PSReadLine) {
+    Import-Module PSReadLine -ErrorAction SilentlyContinue
+    try {
+        Set-PSReadLineOption -AddToHistoryHandler {
+            param([string]$line)
+            $env:PIPELOG_LAST_COMMAND = $line
+            return $true
+        }
+    } catch { }
+}
+
+function pipelog {
+    $exe = (Get-Command pipelog.exe -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1).Source
+    if (-not $exe) {
+        Write-Error 'pipelog.exe not found on PATH.'
+        return
+    }
+
+    $hasCmd = $false
+    $hasTitle = $false
+    foreach ($a in $args) {
+        if ($a -eq '--cmd') { $hasCmd = $true }
+        if ($a -eq '--title' -or $a -eq '-t') { $hasTitle = $true }
+    }
+
+    $stdinPiped = $false
+    try { $stdinPiped = [Console]::IsInputRedirected } catch { }
+
+    if ($stdinPiped -and -not $hasCmd -and $env:PIPELOG_LAST_COMMAND) {
+        $line = $env:PIPELOG_LAST_COMMAND
+        # Strip everything from the first ` | ... pipelog` onward, leaving the producer.
+        $left = [regex]::Replace($line, '\s*\|\s*[^|]*pipelog(\.exe)?(\b.*)?$', '')
+        $left = $left.Trim()
+
+        if ($left) {
+            if ($hasTitle) {
+                & $exe --cmd $left @args
+            } else {
+                & $exe --cmd $left --title $left @args
+            }
+            return
+        }
+    }
+
+    & $exe @args
+}
+"#;
+            println!("{}", snippet);
+        }
         _ => {
             return Err(anyhow::anyhow!(
-                "Unsupported shell '{}'. Use: pipelog init zsh",
+                "Unsupported shell '{}'. Use: pipelog init <zsh|powershell>",
                 shell
             ));
         }
