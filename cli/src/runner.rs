@@ -50,28 +50,55 @@ fn enable_vt_processing() {
 #[cfg(not(windows))]
 fn enable_vt_processing() {}
 
-/// On Windows, `echo`, `dir`, etc. are `cmd.exe` built-ins and cannot be spawned
-/// directly via `CreateProcess`. Detect a single-token, all-builtin invocation
-/// and rewrite it to `cmd /c <args...>` so it Just Works.
+/// On Windows, several things cannot be launched directly via `CreateProcess`:
+///
+/// - `cmd.exe` built-ins (`echo`, `dir`, ...) - they only exist inside cmd.
+/// - Batch / PowerShell scripts (`*.cmd`, `*.bat`, `*.ps1`).
+/// - Bare names like `npm` where a non-PE file (a bash launcher) exists next
+///   to the real `.cmd`/`.exe` and `portable-pty`'s search picks the wrong one.
+///
+/// In any of these cases we rewrite the invocation to `cmd /C <argv...>` and
+/// let `cmd.exe` apply the standard `PATHEXT` resolution.
 #[cfg(windows)]
-fn maybe_wrap_cmd_builtin(argv: Vec<String>) -> (Vec<String>, bool) {
+fn maybe_wrap_cmd_builtin(argv: Vec<String>) -> (Vec<String>, &'static str) {
     if argv.is_empty() {
-        return (argv, false);
+        return (argv, "");
     }
-    let head = argv[0].to_ascii_lowercase();
-    if !CMD_BUILTINS.contains(&head.as_str()) {
-        return (argv, false);
+    let head = &argv[0];
+    let head_lower = head.to_ascii_lowercase();
+
+    if CMD_BUILTINS.contains(&head_lower.as_str()) {
+        return (wrap_cmd_c(argv), "cmd built-in");
     }
+
+    let path = std::path::Path::new(head);
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase());
+    let is_path = head.contains('\\') || head.contains('/');
+
+    match extension.as_deref() {
+        Some("cmd") | Some("bat") | Some("ps1") => (wrap_cmd_c(argv), "shell script"),
+        Some("exe") | Some("com") => (argv, ""),
+        Some(_) => (argv, ""),
+        None if !is_path => (wrap_cmd_c(argv), "PATHEXT resolution"),
+        None => (argv, ""),
+    }
+}
+
+#[cfg(windows)]
+fn wrap_cmd_c(argv: Vec<String>) -> Vec<String> {
     let mut wrapped = Vec::with_capacity(argv.len() + 2);
     wrapped.push("cmd".to_string());
     wrapped.push("/C".to_string());
     wrapped.extend(argv);
-    (wrapped, true)
+    wrapped
 }
 
 #[cfg(not(windows))]
-fn maybe_wrap_cmd_builtin(argv: Vec<String>) -> (Vec<String>, bool) {
-    (argv, false)
+fn maybe_wrap_cmd_builtin(argv: Vec<String>) -> (Vec<String>, &'static str) {
+    (argv, "")
 }
 
 struct RawModeGuard(bool);
@@ -598,12 +625,12 @@ pub async fn run_command(
 
     enable_vt_processing();
 
-    let (effective_argv, wrapped_with_cmd) = maybe_wrap_cmd_builtin(argv);
-    if wrapped_with_cmd {
+    let (effective_argv, wrap_reason) = maybe_wrap_cmd_builtin(argv);
+    if !wrap_reason.is_empty() {
         eprintln!(
             "{} {}",
             "ℹ".dimmed(),
-            "wrapping cmd built-in via `cmd /C ...`".dimmed()
+            format!("wrapping via `cmd /C ...` ({})", wrap_reason).dimmed()
         );
     }
 
