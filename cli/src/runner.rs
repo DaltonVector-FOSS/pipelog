@@ -277,14 +277,22 @@ fn run_pty(argv: Vec<String>) -> Result<(i32, Vec<u8>, bool)> {
                 match signal {
                     SIGINT => {
                         let n = sc.fetch_add(1, Ordering::SeqCst);
-                        if n == 0 {
-                            let mut guard = writer_sig.lock().unwrap();
-                            if let Some(w) = guard.as_mut() {
-                                let _ = w.write_all(b"\x03");
-                                let _ = w.flush();
+                        match n {
+                            0 => {
+                                let mut guard = writer_sig.lock().unwrap();
+                                if let Some(w) = guard.as_mut() {
+                                    let _ = w.write_all(b"\x03");
+                                    let _ = w.flush();
+                                }
                             }
-                        } else {
-                            let _ = killer_sig.lock().unwrap().kill();
+                            1 => {
+                                let _ = killer_sig.lock().unwrap().kill();
+                            }
+                            _ => {
+                                // Escape hatch: third Ctrl-C abandons everything.
+                                eprintln!("\npipelog: aborting on repeated Ctrl-C");
+                                std::process::exit(130);
+                            }
                         }
                     }
                     SIGWINCH => {
@@ -305,15 +313,22 @@ fn run_pty(argv: Vec<String>) -> Result<(i32, Vec<u8>, bool)> {
         let sc = sig_count.clone();
         ctrlc::set_handler(move || {
             let n = sc.fetch_add(1, Ordering::SeqCst);
-            if n == 0 {
-                if let Ok(mut guard) = writer_sig.lock() {
-                    if let Some(w) = guard.as_mut() {
-                        let _ = w.write_all(b"\x03");
-                        let _ = w.flush();
+            match n {
+                0 => {
+                    if let Ok(mut guard) = writer_sig.lock() {
+                        if let Some(w) = guard.as_mut() {
+                            let _ = w.write_all(b"\x03");
+                            let _ = w.flush();
+                        }
                     }
                 }
-            } else {
-                let _ = killer_sig.lock().unwrap().kill();
+                1 => {
+                    let _ = killer_sig.lock().unwrap().kill();
+                }
+                _ => {
+                    eprintln!("\npipelog: aborting on repeated Ctrl-C");
+                    std::process::exit(130);
+                }
             }
         })
         .map_err(|e| anyhow::anyhow!("ctrlc handler: {}", e))?;
@@ -329,15 +344,23 @@ fn run_pty(argv: Vec<String>) -> Result<(i32, Vec<u8>, bool)> {
     shutdown_stdin.store(true, Ordering::SeqCst);
     *writer_shared.lock().unwrap() = None;
 
-    reader_handle
-        .join()
-        .map_err(|_| anyhow::anyhow!("reader thread panicked"))??;
+    // Brief grace period so any final output the child wrote before exiting
+    // lands in the capture buffer. We deliberately do NOT join the reader:
+    // on Windows ConPTY in particular, the master reader does not always
+    // EOF after the child exits, which would hang us indefinitely.
+    thread::sleep(Duration::from_millis(150));
 
     let (buf, truncated) = {
         let g = capture.lock().unwrap();
         (g.clone(), truncated_flag.load(Ordering::Relaxed))
     };
 
+    // Drop the main-thread reference to the master pty. On Windows this
+    // triggers ClosePseudoConsole, which prompts the reader thread to
+    // unblock and exit. The OS will reap any threads still parked on a
+    // blocking syscall when the process terminates.
+    drop(master);
+    drop(reader_handle);
     drop(stdin_thread);
 
     Ok((code, buf, truncated))
