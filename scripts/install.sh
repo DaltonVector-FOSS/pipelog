@@ -124,7 +124,11 @@ main() {
   log "Verify install:"
   log "  ${BIN_NAME} --version"
   log ""
-  log "Next:"
+  log "Run once (zsh — captures command in pipelines):"
+  log "pipelog init zsh >> ~/.zshrc"
+  log "source ~/.zshrc"
+  log ""
+  log "Then log in:"
   log "  ${BIN_NAME} auth login"
 }
 

@@ -2,18 +2,81 @@ use anyhow::Result;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Read};
+use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 use crate::api::{Client, CreateEntry};
 
 const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024; // 10MB
 
+fn sanitize_command_candidate(cmd: &str) -> Option<String> {
+    let mut s = cmd.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+    if s.is_empty() {
+        return None;
+    }
+
+    // Drop leading prompt-ish markers like "(git)" that can leak in from shell/process views.
+    loop {
+        let trimmed = s.trim_start();
+        if !trimmed.starts_with('(') {
+            s = trimmed.to_string();
+            break;
+        }
+        let Some(close_idx) = trimmed.find(')') else { break };
+        let after = trimmed[close_idx + 1..].trim_start();
+        if after.is_empty() {
+            return None;
+        }
+        s = after.to_string();
+    }
+
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Ignore bare "(name)" process display values (e.g. "(git)").
+    if trimmed.starts_with('(') && trimmed.ends_with(')') {
+        return None;
+    }
+
+    Some(trimmed.to_string())
+}
+
+fn command_before_pipelog(cmd: &str) -> Option<String> {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let segments: Vec<&str> = trimmed.split('|').collect();
+    if segments.len() > 1 {
+        for i in 1..segments.len() {
+            let right = segments[i].trim().to_lowercase();
+            if right.starts_with("pipelog")
+                || right.contains("/pipelog")
+                || right.contains("./target/release/pipelog")
+            {
+                return sanitize_command_candidate(segments[i - 1]);
+            }
+        }
+    }
+
+    sanitize_command_candidate(trimmed)
+}
+
 fn infer_command_from_parent() -> Option<String> {
     // Allow explicit shell-provided override.
     if let Ok(cmd) = std::env::var("PIPELOG_CMD") {
-        let cmd = cmd.trim().to_string();
-        if !cmd.is_empty() {
-            return Some(cmd);
+        if let Some(cleaned) = command_before_pipelog(&cmd) {
+            return Some(cleaned);
+        }
+    }
+
+    // zsh init snippet stores this command in preexec.
+    if let Ok(cmd) = std::env::var("PIPELOG_LAST_COMMAND") {
+        if let Some(cleaned) = command_before_pipelog(&cmd) {
+            return Some(cleaned);
         }
     }
 
@@ -50,7 +113,7 @@ fn infer_command_from_parent() -> Option<String> {
         if seg.contains("pipelog") && i > 0 {
             let candidate = segments[i - 1].trim().trim_matches('"').trim_matches('\'');
             if !candidate.is_empty() {
-                return Some(candidate.to_string());
+                return command_before_pipelog(candidate);
             }
         }
     }
@@ -102,13 +165,66 @@ fn infer_command_from_process_group() -> Option<String> {
             continue;
         }
 
-        return Some(cmd);
+        if let Some(cleaned) = sanitize_command_candidate(&cmd) {
+            return Some(cleaned);
+        }
     }
 
     None
 }
 
+fn read_last_zsh_history_entry() -> Option<String> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if let Ok(p) = std::env::var("HISTFILE") {
+        if !p.is_empty() {
+            paths.push(PathBuf::from(p));
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".zsh_history"));
+        paths.push(home.join(".histfile"));
+    }
+
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        let bytes = std::fs::read(&path).ok()?;
+        // zsh history can be in non-utf8 (extended history metachar 0x83 etc.).
+        let text = String::from_utf8_lossy(&bytes);
+        let lines: Vec<&str> = text.lines().collect();
+        // Walk from the bottom and join continuations (lines ending in '\\').
+        let mut current: Vec<String> = Vec::new();
+        for line in lines.into_iter().rev() {
+            current.insert(0, line.to_string());
+            if !line.ends_with('\\') {
+                break;
+            }
+        }
+        let mut last = current.join("\n");
+
+        // Extended-history format: ": <ts>:<dur>;<cmd>".
+        if last.starts_with(':') {
+            if let Some(idx) = last.find(';') {
+                last = last[idx + 1..].to_string();
+            }
+        }
+
+        let cleaned = last.trim().to_string();
+        if !cleaned.is_empty() {
+            return Some(cleaned);
+        }
+    }
+    None
+}
+
 fn infer_command_from_shell_history() -> Option<String> {
+    if let Some(cmd) = read_last_zsh_history_entry() {
+        if let Some(cleaned) = command_before_pipelog(&cmd) {
+            return Some(cleaned);
+        }
+    }
+
     let shell = std::env::var("SHELL").ok().unwrap_or_default();
     let output = if shell.contains("zsh") {
         ProcessCommand::new("zsh")
@@ -136,16 +252,7 @@ fn infer_command_from_shell_history() -> Option<String> {
         }
     }
 
-    for marker in ["| pipelog", "| ./target/release/pipelog", "| /usr/local/bin/pipelog"] {
-        if let Some((before_pipe, _)) = cmd.split_once(marker) {
-            let cleaned = before_pipe.trim().to_string();
-            if !cleaned.is_empty() {
-                return Some(cleaned);
-            }
-        }
-    }
-
-    None
+    command_before_pipelog(&cmd)
 }
 
 pub async fn run_capture(

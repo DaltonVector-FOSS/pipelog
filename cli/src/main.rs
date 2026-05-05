@@ -164,10 +164,10 @@ fn print_shell_init(shell: &str) -> anyhow::Result<()> {
     match shell {
         "zsh" => {
             let snippet = r#"# pipelog shell integration (zsh)
-typeset -g PIPELOG_LAST_COMMAND=""
+typeset -gx PIPELOG_LAST_COMMAND=""
 
 _pipelog_preexec() {
-  PIPELOG_LAST_COMMAND="$1"
+  typeset -gx PIPELOG_LAST_COMMAND="$1"
 }
 autoload -Uz add-zsh-hook 2>/dev/null || true
 add-zsh-hook preexec _pipelog_preexec

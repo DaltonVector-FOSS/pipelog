@@ -40,6 +40,13 @@ pub async fn login() -> Result<()> {
     config::save(&cfg)?;
 
     println!("{} Logged in as {}", "✓".green().bold(), email.cyan());
+    println!();
+    println!(
+        "{}",
+        "zsh users: enable pipeline command capture (append once, then reload):".dimmed()
+    );
+    println!("{}", "  pipelog init zsh >> ~/.zshrc".cyan());
+    println!("{}", "  source ~/.zshrc".cyan());
     Ok(())
 }
 

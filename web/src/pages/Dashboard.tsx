@@ -4,6 +4,18 @@ import { formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
 import { api, useAuthStore, type Entry } from '../api';
 
+function commandBasename(command?: string | null): string | null {
+  if (!command) return null;
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 0) return null;
+  const exec = parts[0].split('/').filter(Boolean).pop() ?? parts[0];
+  if (!exec) return null;
+  const rest = parts.slice(1).join(' ');
+  return rest ? `${exec} ${rest}` : exec;
+}
+
 export function Dashboard() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
@@ -156,7 +168,7 @@ export function Dashboard() {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-white text-xs font-bold truncate flex-1">
-                      {entry.title ?? entry.command ?? 'untitled'}
+                      {entry.title ?? commandBasename(entry.command) ?? entry.command ?? 'untitled'}
                     </span>
                     {entry.is_public && (
                       <span className="text-[#00ff88] text-[10px] flex-shrink-0">shared</span>
@@ -188,10 +200,10 @@ export function Dashboard() {
               <div className="border-b border-[#1a1a1a] px-6 py-4 flex items-start justify-between gap-4 flex-shrink-0">
                 <div className="min-w-0">
                   <h1 className="text-white font-bold text-sm truncate">
-                    {selected.title ?? selected.command ?? 'untitled'}
+                    {selected.title ?? commandBasename(selected.command) ?? selected.command ?? 'untitled'}
                   </h1>
                   {selected.command && (
-                    <code className="text-[#00ff88] text-xs mt-0.5 block truncate">$ {selected.command}</code>
+                    <code className="text-[#00ff88] text-xs mt-0.5 block truncate">{selected.command}</code>
                   )}
                   <div className="flex items-center gap-3 mt-2 flex-wrap">
                     {selected.tags.map(tag => (
