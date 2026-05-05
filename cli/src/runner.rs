@@ -53,12 +53,15 @@ fn enable_vt_processing() {}
 /// On Windows, several things cannot be launched directly via `CreateProcess`:
 ///
 /// - `cmd.exe` built-ins (`echo`, `dir`, ...) - they only exist inside cmd.
-/// - Batch / PowerShell scripts (`*.cmd`, `*.bat`, `*.ps1`).
+/// - Batch scripts (`*.cmd`, `*.bat`).
+/// - PowerShell scripts (`*.ps1`) - `cmd /C` would resolve these via the
+///   file association (which is *Notepad* by default), so we must invoke
+///   them through `powershell.exe` / `pwsh.exe` explicitly.
 /// - Bare names like `npm` where a non-PE file (a bash launcher) exists next
 ///   to the real `.cmd`/`.exe` and `portable-pty`'s search picks the wrong one.
 ///
-/// In any of these cases we rewrite the invocation to `cmd /C <argv...>` and
-/// let `cmd.exe` apply the standard `PATHEXT` resolution.
+/// For cmd built-ins / batch / PATHEXT resolution we wrap with `cmd /C`.
+/// For `.ps1` we wrap with `powershell -NoProfile -ExecutionPolicy Bypass -File`.
 #[cfg(windows)]
 fn maybe_wrap_cmd_builtin(argv: Vec<String>) -> (Vec<String>, &'static str) {
     if argv.is_empty() {
@@ -79,7 +82,8 @@ fn maybe_wrap_cmd_builtin(argv: Vec<String>) -> (Vec<String>, &'static str) {
     let is_path = head.contains('\\') || head.contains('/');
 
     match extension.as_deref() {
-        Some("cmd") | Some("bat") | Some("ps1") => (wrap_cmd_c(argv), "shell script"),
+        Some("ps1") => (wrap_powershell_file(argv), "PowerShell script"),
+        Some("cmd") | Some("bat") => (wrap_cmd_c(argv), "shell script"),
         Some("exe") | Some("com") => (argv, ""),
         Some(_) => (argv, ""),
         None if !is_path => (wrap_cmd_c(argv), "PATHEXT resolution"),
@@ -92,6 +96,41 @@ fn wrap_cmd_c(argv: Vec<String>) -> Vec<String> {
     let mut wrapped = Vec::with_capacity(argv.len() + 2);
     wrapped.push("cmd".to_string());
     wrapped.push("/C".to_string());
+    wrapped.extend(argv);
+    wrapped
+}
+
+/// Prefer PowerShell 7+ (`pwsh.exe`) when present on PATH, otherwise fall
+/// back to Windows PowerShell (`powershell.exe`), which ships on every
+/// modern Windows install.
+#[cfg(windows)]
+fn powershell_exe() -> &'static str {
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in path.split(';') {
+            if dir.is_empty() {
+                continue;
+            }
+            if std::path::Path::new(dir).join("pwsh.exe").is_file() {
+                return "pwsh";
+            }
+        }
+    }
+    "powershell"
+}
+
+/// Wrap a `.ps1` invocation so it actually runs under PowerShell.
+///
+/// `-File` (rather than `-Command`) is required so that the script's own
+/// arguments (e.g. `-OutputPath C:\publish\Foo`) are forwarded verbatim
+/// to the script's `param(...)` block.
+#[cfg(windows)]
+fn wrap_powershell_file(argv: Vec<String>) -> Vec<String> {
+    let mut wrapped = Vec::with_capacity(argv.len() + 5);
+    wrapped.push(powershell_exe().to_string());
+    wrapped.push("-NoProfile".to_string());
+    wrapped.push("-ExecutionPolicy".to_string());
+    wrapped.push("Bypass".to_string());
+    wrapped.push("-File".to_string());
     wrapped.extend(argv);
     wrapped
 }
