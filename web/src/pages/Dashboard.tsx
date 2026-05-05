@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -29,9 +29,7 @@ export function Dashboard() {
   const fetchEntries = useCallback(async () => {
     setLoading(true);
     try {
-      let url = '/entries?limit=50';
-      if (tagFilter) url += `&tag=${encodeURIComponent(tagFilter)}`;
-      const { data } = await api.get<Entry[]>(url);
+      const { data } = await api.get<Entry[]>('/entries?limit=50');
       setEntries(data);
       const tags = Array.from(new Set(data.flatMap(e => e.tags))).sort();
       setAllTags(tags);
@@ -40,9 +38,14 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [tagFilter]);
+  }, []);
 
   useEffect(() => { fetchEntries(); }, [fetchEntries]);
+
+  const filteredEntries = useMemo(
+    () => (tagFilter ? entries.filter(e => e.tags.includes(tagFilter)) : entries),
+    [entries, tagFilter],
+  );
 
   const doSearch = async () => {
     if (!search.trim()) return fetchEntries();
@@ -50,6 +53,8 @@ export function Dashboard() {
     try {
       const { data } = await api.get<Entry[]>(`/entries/search?q=${encodeURIComponent(search)}`);
       setEntries(data);
+      const tags = Array.from(new Set(data.flatMap(e => e.tags))).sort();
+      setAllTags(tags);
     } finally {
       setLoading(false);
     }
@@ -77,6 +82,15 @@ export function Dashboard() {
       toast.success('Deleted');
     } catch {
       toast.error('Failed to delete');
+    }
+  };
+
+  const copyOutputToClipboard = async (output: string) => {
+    try {
+      await navigator.clipboard.writeText(output);
+      toast.success('Output copied');
+    } catch {
+      toast.error('Could not copy');
     }
   };
 
@@ -159,8 +173,12 @@ export function Dashboard() {
                   {"<cmd> | pipelog"}
                 </code>
               </div>
+            ) : filteredEntries.length === 0 ? (
+              <div className="p-6 text-center">
+                <p className="text-[#333] text-xs">no entries match this tag</p>
+              </div>
             ) : (
-              entries.map(entry => (
+              filteredEntries.map(entry => (
                 <button
                   key={entry.id}
                   onClick={() => setSelected(entry)}
@@ -223,12 +241,21 @@ export function Dashboard() {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <button
+                    type="button"
+                    onClick={() => copyOutputToClipboard(selected.output)}
+                    className="text-xs text-[#444] hover:text-[#00ff88] border border-[#1a1a1a] hover:border-[#00ff88] px-3 py-1.5 rounded transition-colors"
+                  >
+                    copy output
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => shareEntry(selected)}
                     className="text-xs text-[#444] hover:text-[#00ff88] border border-[#1a1a1a] hover:border-[#00ff88] px-3 py-1.5 rounded transition-colors"
                   >
                     {selected.is_public ? 'copy link' : 'share'}
                   </button>
                   <button
+                    type="button"
                     onClick={() => deleteEntry(selected.id)}
                     className="text-xs text-[#444] hover:text-red-400 border border-[#1a1a1a] hover:border-red-900 px-3 py-1.5 rounded transition-colors"
                   >
