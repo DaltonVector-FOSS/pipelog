@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${PIPELOG_REPO:-shahadil/pipelog}"
+REPO="${PIPELOG_REPO:-DaltonVector-FOSS/pipelog}"
 VERSION="${PIPELOG_VERSION:-latest}"
 INSTALL_DIR="${PIPELOG_INSTALL_DIR:-/usr/local/bin}"
 DOWNLOAD_URL="${PIPELOG_DOWNLOAD_URL:-}"
