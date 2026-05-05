@@ -1,6 +1,6 @@
+use crate::config;
 use anyhow::{anyhow, Result};
 use colored::*;
-use crate::config;
 
 pub async fn login() -> Result<()> {
     let cfg = config::load()?;

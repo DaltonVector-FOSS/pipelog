@@ -7,6 +7,8 @@ import { Dashboard } from './pages/Dashboard';
 import { SharedEntry } from './pages/SharedEntry';
 import { CliAuth } from './pages/CliAuth';
 import { Landing } from './pages/Landing';
+import { GetStarted } from './pages/GetStarted';
+import { InstallCli } from './pages/InstallCli';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
@@ -27,6 +29,8 @@ export default function App() {
         <Route path="/dashboard" element={
           <PrivateRoute><Dashboard /></PrivateRoute>
         } />
+        <Route path="/install" element={<InstallCli />} />
+        <Route path="/get-started" element={<GetStarted />} />
         <Route path="/" element={<Landing />} />
       </Routes>
     </BrowserRouter>

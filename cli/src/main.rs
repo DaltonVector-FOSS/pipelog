@@ -1,7 +1,7 @@
-mod auth;
 mod api;
-mod config;
+mod auth;
 mod capture;
+mod config;
 
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -317,7 +317,11 @@ async fn share_entry(id: String) -> anyhow::Result<()> {
     let entry = client.share_entry(&id).await?;
     let cfg = config::load()?;
     let url = format!("{}/s/{}", cfg.web_url, entry.share_token.unwrap_or(id));
-    println!("{} {}", "Shareable link:".green().bold(), url.cyan().underline());
+    println!(
+        "{} {}",
+        "Shareable link:".green().bold(),
+        url.cyan().underline()
+    );
     Ok(())
 }
 
@@ -329,10 +333,7 @@ async fn show_entry(id: String) -> anyhow::Result<()> {
     println!(
         "{} {}",
         "Title:".dimmed(),
-        entry
-            .title
-            .unwrap_or_else(|| "untitled".to_string())
-            .bold()
+        entry.title.unwrap_or_else(|| "untitled".to_string()).bold()
     );
     println!("{} {}", "Tags:".dimmed(), entry.tags.join(", ").yellow());
     println!(
@@ -352,7 +353,11 @@ async fn show_entry(id: String) -> anyhow::Result<()> {
     println!(
         "{} {}",
         "Public:".dimmed(),
-        if entry.is_public { "yes".green() } else { "no".dimmed() }
+        if entry.is_public {
+            "yes".green()
+        } else {
+            "no".dimmed()
+        }
     );
     println!("\n{}", "─".repeat(60).dimmed());
     println!("{}", entry.output);

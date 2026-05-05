@@ -1,6 +1,6 @@
+use crate::config;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use crate::config;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Entry {

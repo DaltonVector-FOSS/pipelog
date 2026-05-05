@@ -1,3 +1,4 @@
+use crate::api::{Client, CreateEntry};
 use anyhow::Result;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -5,12 +6,16 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
-use crate::api::{Client, CreateEntry};
 
 const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024; // 10MB
 
 fn sanitize_command_candidate(cmd: &str) -> Option<String> {
-    let mut s = cmd.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+    let mut s = cmd
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string();
     if s.is_empty() {
         return None;
     }
@@ -22,7 +27,9 @@ fn sanitize_command_candidate(cmd: &str) -> Option<String> {
             s = trimmed.to_string();
             break;
         }
-        let Some(close_idx) = trimmed.find(')') else { break };
+        let Some(close_idx) = trimmed.find(')') else {
+            break;
+        };
         let after = trimmed[close_idx + 1..].trim_start();
         if after.is_empty() {
             return None;
@@ -43,6 +50,44 @@ fn sanitize_command_candidate(cmd: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+/// True if this `|` segment is the pipelog invocation (possibly with path / quotes / `&`).
+fn pipe_segment_invokes_pipelog(seg: &str) -> bool {
+    let mut s = seg.trim();
+    while let Some(rest) = s.strip_prefix('&') {
+        s = rest.trim_start();
+    }
+    let first_raw = s.split_whitespace().next().unwrap_or("");
+    let first = first_raw
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_lowercase();
+    if first.is_empty() {
+        return false;
+    }
+    first == "pipelog"
+        || first.ends_with("\\pipelog.exe")
+        || first.ends_with("/pipelog.exe")
+        || first.ends_with("\\pipelog")
+        || first.ends_with("/pipelog")
+        || first.starts_with("pipelog")
+}
+
+fn extract_command_before_pipelog_in_pipeline(full: &str) -> Option<String> {
+    let segments: Vec<&str> = full.split('|').collect();
+    for i in 0..segments.len() {
+        let seg = segments[i].trim();
+        if i == 0 || !pipe_segment_invokes_pipelog(seg) {
+            continue;
+        }
+        let candidate = segments[i - 1].trim().trim_matches('"').trim_matches('\'');
+        if candidate.is_empty() {
+            continue;
+        }
+        return command_before_pipelog(candidate);
+    }
+    None
+}
+
 fn command_before_pipelog(cmd: &str) -> Option<String> {
     let trimmed = cmd.trim();
     if trimmed.is_empty() {
@@ -52,11 +97,7 @@ fn command_before_pipelog(cmd: &str) -> Option<String> {
     let segments: Vec<&str> = trimmed.split('|').collect();
     if segments.len() > 1 {
         for i in 1..segments.len() {
-            let right = segments[i].trim().to_lowercase();
-            if right.starts_with("pipelog")
-                || right.contains("/pipelog")
-                || right.contains("./target/release/pipelog")
-            {
+            if pipe_segment_invokes_pipelog(segments[i]) {
                 return sanitize_command_candidate(segments[i - 1]);
             }
         }
@@ -80,54 +121,129 @@ fn infer_command_from_parent() -> Option<String> {
         }
     }
 
-    // Best effort: inspect parent process command line and extract the command
-    // segment just before a pipelog invocation in a pipeline.
-    if let Some(cmd) = infer_command_from_process_group() {
-        return Some(cmd);
+    #[cfg(unix)]
+    {
+        // Best effort: inspect sibling processes in the same process group (short-lived producers).
+        if let Some(cmd) = infer_command_from_process_group() {
+            return Some(cmd);
+        }
+
+        let pid = std::process::id().to_string();
+        let ppid_output = ProcessCommand::new("ps")
+            .args(["-o", "ppid=", "-p", &pid])
+            .output()
+            .ok()?;
+        let ppid = String::from_utf8_lossy(&ppid_output.stdout)
+            .trim()
+            .to_string();
+        if ppid.is_empty() {
+            return infer_command_from_shell_history();
+        }
+
+        let parent_output = ProcessCommand::new("ps")
+            .args(["-o", "command=", "-p", &ppid])
+            .output()
+            .ok()?;
+        let parent_cmd = String::from_utf8_lossy(&parent_output.stdout)
+            .trim()
+            .to_string();
+        if parent_cmd.is_empty() {
+            return infer_command_from_shell_history();
+        }
+
+        if let Some(cmd) = extract_command_before_pipelog_in_pipeline(&parent_cmd) {
+            return Some(cmd);
+        }
     }
 
-    let pid = std::process::id().to_string();
-    let ppid_output = ProcessCommand::new("ps")
-        .args(["-o", "ppid=", "-p", &pid])
-        .output()
-        .ok()?;
-    let ppid = String::from_utf8_lossy(&ppid_output.stdout).trim().to_string();
-    if ppid.is_empty() {
-        return None;
-    }
-
-    let parent_output = ProcessCommand::new("ps")
-        .args(["-o", "command=", "-p", &ppid])
-        .output()
-        .ok()?;
-    let parent_cmd = String::from_utf8_lossy(&parent_output.stdout)
-        .trim()
-        .to_string();
-    if parent_cmd.is_empty() {
-        return infer_command_from_shell_history();
-    }
-
-    let segments: Vec<&str> = parent_cmd.split('|').collect();
-    for i in 0..segments.len() {
-        let seg = segments[i].trim();
-        if seg.contains("pipelog") && i > 0 {
-            let candidate = segments[i - 1].trim().trim_matches('"').trim_matches('\'');
-            if !candidate.is_empty() {
-                return command_before_pipelog(candidate);
-            }
+    #[cfg(windows)]
+    {
+        if let Some(cmd) = infer_command_windows() {
+            return Some(cmd);
         }
     }
 
     infer_command_from_shell_history()
 }
 
+#[cfg(windows)]
+fn join_process_cmd(cmd: &[std::ffi::OsString]) -> String {
+    cmd.iter()
+        .map(|p| p.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Windows has no `ps`; read the parent (and sibling) command lines via `sysinfo`.
+#[cfg(windows)]
+fn infer_command_windows() -> Option<String> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+    let mut sys = System::new();
+    let my_pid = Pid::from_u32(std::process::id());
+    let refresh_kind = ProcessRefreshKind::nothing()
+        .with_cmd(UpdateKind::Always)
+        .without_tasks();
+
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh_kind);
+
+    let parent_pid = sys.process(my_pid)?.parent()?;
+
+    if let Some(parent_proc) = sys.process(parent_pid) {
+        let parent_cmd = join_process_cmd(parent_proc.cmd());
+        if let Some(cmd) = extract_command_before_pipelog_in_pipeline(&parent_cmd) {
+            return Some(cmd);
+        }
+    }
+
+    let mut candidates: Vec<String> = Vec::new();
+    for (pid, proc) in sys.processes() {
+        if *pid == my_pid {
+            continue;
+        }
+        if proc.parent() != Some(parent_pid) {
+            continue;
+        }
+
+        let cmd_joined = join_process_cmd(proc.cmd());
+        if cmd_joined.is_empty() {
+            continue;
+        }
+        if cmd_joined.to_lowercase().contains("pipelog") {
+            continue;
+        }
+
+        let name_lower = proc.name().to_string_lossy().to_lowercase();
+        if matches!(
+            name_lower.as_str(),
+            "cmd.exe"
+                | "powershell.exe"
+                | "pwsh.exe"
+                | "conhost.exe"
+                | "windowsterminal.exe"
+                | "wt.exe"
+        ) {
+            continue;
+        }
+
+        if let Some(cleaned) = sanitize_command_candidate(&cmd_joined) {
+            candidates.push(cleaned);
+        }
+    }
+
+    candidates.into_iter().next()
+}
+
+#[cfg(unix)]
 fn infer_command_from_process_group() -> Option<String> {
     let pid = std::process::id().to_string();
     let pgid_output = ProcessCommand::new("ps")
         .args(["-o", "pgid=", "-p", &pid])
         .output()
         .ok()?;
-    let pgid = String::from_utf8_lossy(&pgid_output.stdout).trim().to_string();
+    let pgid = String::from_utf8_lossy(&pgid_output.stdout)
+        .trim()
+        .to_string();
     if pgid.is_empty() {
         return None;
     }
@@ -147,8 +263,12 @@ fn infer_command_from_process_group() -> Option<String> {
         }
 
         let mut parts = trimmed.split_whitespace();
-        let Some(line_pid) = parts.next() else { continue };
-        let Ok(line_pid_num) = line_pid.parse::<u32>() else { continue };
+        let Some(line_pid) = parts.next() else {
+            continue;
+        };
+        let Ok(line_pid_num) = line_pid.parse::<u32>() else {
+            continue;
+        };
         if line_pid_num == std::process::id() {
             continue;
         }

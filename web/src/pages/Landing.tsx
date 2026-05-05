@@ -1,47 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-
-const INSTALL_UNIX =
-  'curl -fsSL https://raw.githubusercontent.com/DaltonVector-FOSS/pipelog/main/scripts/install.sh | bash';
-
-const INSTALL_WINDOWS_PS51 = `powershell -NoProfile -ExecutionPolicy Bypass -Command "iex ((Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/DaltonVector-FOSS/pipelog/main/scripts/install.ps1').Content)"`;
-
-const INSTALL_WINDOWS_PS7 =
-  'irm https://raw.githubusercontent.com/DaltonVector-FOSS/pipelog/main/scripts/install.ps1 | iex';
-
-const CMD_AUTH_LOGIN = 'pipelog auth login';
-
-const CMD_FIRST_CAPTURE = 'echo "hello world" | pipelog --title "First run" -t demo';
-
-const CMD_DASHBOARD = 'pipelog dashboard';
-
-const getStartedSteps = [
-  {
-    title: 'Create an account',
-    body: 'Use the web app to register. You will use the same account when you sign in from the CLI.',
-    href: '/register' as const,
-    cta: 'Register',
-  },
-  {
-    title: 'Install the CLI',
-    body: 'Choose your OS in the next section and run the installer one-liner, or build from source with Rust.',
-  },
-  {
-    title: 'Sign in from your terminal',
-    body: 'This opens a browser flow to connect the CLI to your account.',
-    command: CMD_AUTH_LOGIN,
-  },
-  {
-    title: 'Capture command output',
-    body: 'Pipe stdout/stderr into pipelog. Add a title and tags so you can search later.',
-    command: CMD_FIRST_CAPTURE,
-  },
-  {
-    title: 'Open your dashboard',
-    body: 'View entries in the browser or list them with pipelog list.',
-    command: CMD_DASHBOARD,
-  },
-];
 
 const features = [
   {
@@ -92,60 +50,31 @@ const faqs = [
   },
 ];
 
-function CopyInstallButton({ text }: { text: string }) {
-  const [status, setStatus] = useState<'idle' | 'copied' | 'error'>('idle');
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(
-    () => () => {
-      if (timeoutRef.current !== null) clearTimeout(timeoutRef.current);
-    },
-    [],
-  );
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setStatus('copied');
-      if (timeoutRef.current !== null) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => setStatus('idle'), 2000);
-    } catch {
-      setStatus('error');
-      if (timeoutRef.current !== null) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => setStatus('idle'), 2500);
-    }
-  };
-
-  const label =
-    status === 'copied' ? 'Copied' : status === 'error' ? 'Failed' : 'Copy';
-
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className="shrink-0 rounded border border-[#2a2a2a] bg-[#141414] px-2.5 py-1 text-[10px] font-mono font-semibold uppercase tracking-wide text-[#9a9a9a] hover:border-[#00ff88] hover:text-[#00ff88] transition-colors"
-      aria-label={
-        status === 'copied' ? 'Copied to clipboard' : 'Copy install command to clipboard'
-      }
-    >
-      {label}
-    </button>
-  );
-}
-
 export function Landing() {
   const [openFaq, setOpenFaq] = useState<number | null>(0);
 
   return (
     <div className="min-h-screen bg-[#080808] text-white">
       <header className="border-b border-[#1a1a1a]">
-        <div className="mx-auto max-w-6xl px-4 py-5 flex items-center justify-between">
-          <div className="inline-flex items-center gap-2">
+        <div className="mx-auto max-w-6xl px-4 py-5 flex items-center justify-between gap-4">
+          <Link to="/" className="inline-flex items-center gap-2 hover:opacity-90 transition-opacity">
             <span className="text-[#00ff88] font-mono text-2xl font-bold">pipe</span>
             <span className="text-white font-mono text-2xl font-bold">log</span>
             <span className="text-[#00ff88] font-mono text-2xl">_</span>
-          </div>
-          <div className="flex items-center gap-3">
+          </Link>
+          <div className="flex items-center gap-3 sm:gap-4">
+            <Link
+              to="/get-started"
+              className="text-[#9a9a9a] hover:text-[#00ff88] text-sm font-mono transition-colors"
+            >
+              get started
+            </Link>
+            <Link
+              to="/install"
+              className="text-[#9a9a9a] hover:text-[#00ff88] text-sm font-mono transition-colors"
+            >
+              install
+            </Link>
             <Link
               to="/login"
               className="text-[#9a9a9a] hover:text-white text-sm font-mono transition-colors"
@@ -175,121 +104,24 @@ export function Landing() {
             Stay focused on fixing issues, not hunting through scattered output.
           </p>
           <div className="mt-10 flex flex-col sm:flex-row gap-3 justify-center">
-            <a
-              href="#get-started"
+            <Link
+              to="/get-started"
               className="bg-[#00ff88] text-black font-mono font-bold text-sm px-6 py-3 rounded hover:bg-[#00e87a] transition-colors text-center"
             >
               get started
-            </a>
+            </Link>
+            <Link
+              to="/install"
+              className="border border-[#2a2a2a] text-white font-mono font-semibold text-sm px-6 py-3 rounded hover:border-[#00ff88] hover:text-[#00ff88] transition-colors text-center"
+            >
+              install CLI
+            </Link>
             <Link
               to="/login"
               className="border border-[#2a2a2a] text-white font-mono font-semibold text-sm px-6 py-3 rounded hover:border-[#00ff88] hover:text-[#00ff88] transition-colors"
             >
               sign in
             </Link>
-          </div>
-        </section>
-
-        <section id="get-started" className="mt-16 max-w-3xl mx-auto scroll-mt-20">
-          <h2 className="text-xl font-mono font-bold text-center">Get started</h2>
-          <p className="mt-4 text-center text-sm font-mono text-[#9a9a9a] leading-relaxed">
-            From zero to your first captured log in a few steps.
-          </p>
-          <ol className="mt-10 space-y-5 list-none p-0 m-0">
-            {getStartedSteps.map((step, index) => (
-              <li key={step.title}>
-                <article className="rounded border border-[#1e1e1e] bg-[#0d0d0d] p-5">
-                  <div className="flex flex-wrap items-start gap-3">
-                    <span className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded bg-[#00ff88]/15 font-mono text-sm font-bold text-[#00ff88]">
-                      {index + 1}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="font-mono text-base font-semibold text-white">{step.title}</h3>
-                      <p className="mt-2 text-sm font-mono text-[#9a9a9a] leading-relaxed">{step.body}</p>
-                      {'command' in step && step.command ? (
-                        <div className="mt-3 relative rounded border border-[#1a1a1a] bg-[#080808]">
-                          <div className="absolute top-2 right-2 z-10">
-                            <CopyInstallButton text={step.command} />
-                          </div>
-                          <pre className="overflow-x-auto p-3 pr-24 text-[#00ff88] text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">
-                            {step.command}
-                          </pre>
-                        </div>
-                      ) : null}
-                      {'href' in step && step.href ? (
-                        <div className="mt-4">
-                          <Link
-                            to={step.href}
-                            className="inline-flex rounded border border-[#00ff88] bg-[#00ff88]/10 px-3 py-1.5 text-xs font-mono font-semibold text-[#00ff88] hover:bg-[#00ff88]/20 transition-colors"
-                          >
-                            {step.cta}
-                          </Link>
-                        </div>
-                      ) : null}
-                      {step.title === 'Install the CLI' ? (
-                        <p className="mt-4 text-xs font-mono text-[#666]">
-                          <a
-                            href="#install-cli"
-                            className="text-[#00ff88] underline decoration-[#00ff88]/40 underline-offset-2 hover:decoration-[#00ff88]"
-                          >
-                            Jump to install commands
-                          </a>
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </article>
-              </li>
-            ))}
-          </ol>
-        </section>
-
-        <section id="install-cli" className="mt-20 max-w-3xl mx-auto scroll-mt-20">
-          <h2 className="text-xl font-mono font-bold text-center">Install the CLI</h2>
-          <p className="mt-4 text-center text-sm font-mono text-[#9a9a9a] leading-relaxed">
-            macOS, Linux, or Windows: run the command for your OS, then{' '}
-            <code className="text-[#00ff88]">pipelog auth login</code>.
-          </p>
-          <div className="mt-8 space-y-6">
-            <div className="rounded border border-[#1e1e1e] bg-[#0d0d0d] p-4">
-              <h3 className="text-center text-xs font-mono font-semibold text-[#9a9a9a] uppercase tracking-wide">
-                macOS &amp; Linux
-              </h3>
-              <p className="mt-2 text-center text-[10px] font-mono text-[#666]">bash · zsh · any POSIX shell with curl and tar</p>
-              <div className="mt-3 relative rounded border border-[#1a1a1a] bg-[#080808]">
-                <div className="absolute top-2 right-2 z-10">
-                  <CopyInstallButton text={INSTALL_UNIX} />
-                </div>
-                <pre className="overflow-x-auto p-3 pr-24 text-[#00ff88] text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">
-                  {INSTALL_UNIX}
-                </pre>
-              </div>
-            </div>
-
-            <div className="rounded border border-[#1e1e1e] bg-[#0d0d0d] p-4">
-              <h3 className="text-center text-xs font-mono font-semibold text-[#9a9a9a] uppercase tracking-wide">
-                Windows
-              </h3>
-              <p className="mt-2 text-center text-[10px] font-mono text-[#666]">
-                CMD, Run dialog, or Windows PowerShell 5.1+ (no WSL required). Downloads the MinGW{' '}
-                <code className="text-[#9a9a9a]">x86_64-pc-windows-gnu</code> zip from GitHub Releases.
-              </p>
-              <div className="mt-3 relative rounded border border-[#1a1a1a] bg-[#080808]">
-                <div className="absolute top-2 right-2 z-10">
-                  <CopyInstallButton text={INSTALL_WINDOWS_PS51} />
-                </div>
-                <pre className="overflow-x-auto p-3 pr-24 text-[#00ff88] text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">
-                  {INSTALL_WINDOWS_PS51}
-                </pre>
-              </div>
-              <div className="mt-3 flex flex-col items-center gap-2 text-center text-[10px] font-mono text-[#666] leading-relaxed sm:flex-row sm:justify-center sm:gap-3">
-                <span>
-                  PowerShell 7+ (optional):{' '}
-                  <code className="text-[#9a9a9a] break-all">{INSTALL_WINDOWS_PS7}</code>
-                </span>
-                <CopyInstallButton text={INSTALL_WINDOWS_PS7} />
-              </div>
-            </div>
           </div>
         </section>
 
@@ -356,7 +188,19 @@ export function Landing() {
           <p className="mt-4 text-sm font-mono text-[#9a9a9a]">
             Create your account and start with your first pipeline in minutes.
           </p>
-          <div className="mt-8 flex justify-center">
+          <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
+            <Link
+              to="/get-started"
+              className="border border-[#2a2a2a] text-white font-mono font-semibold text-sm px-6 py-3 rounded hover:border-[#00ff88] hover:text-[#00ff88] transition-colors"
+            >
+              setup guide
+            </Link>
+            <Link
+              to="/install"
+              className="border border-[#2a2a2a] text-white font-mono font-semibold text-sm px-6 py-3 rounded hover:border-[#00ff88] hover:text-[#00ff88] transition-colors"
+            >
+              install CLI
+            </Link>
             <Link
               to="/register"
               className="bg-[#00ff88] text-black font-mono font-bold text-sm px-6 py-3 rounded hover:bg-[#00e87a] transition-colors"

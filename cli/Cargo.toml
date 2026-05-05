@@ -23,3 +23,6 @@ indicatif = "0.17"
 open = "5"
 tokio-util = "0.7"
 atty = "0.2"
+
+[target."cfg(windows)".dependencies]
+sysinfo = "0.38.4"
