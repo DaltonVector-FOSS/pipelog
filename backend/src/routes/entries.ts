@@ -104,15 +104,23 @@ export async function entryRoutes(app: FastifyInstance) {
   // Get single entry
   app.get('/entries/:id', { preHandler: [app.authenticate] }, async (req, reply) => {
     const { userId } = req.user as { userId: string };
-    const { id } = req.params as { id: string };
+    const idRaw = (req.params as { id: string }).id.trim();
+    // Avoid invalid `uuid = $1` casts for short prefixes (CLI lists first 8 hex chars).
+    if (idRaw.length < 4 || !/^[0-9a-fA-F-]+$/.test(idRaw)) {
+      return reply.status(400).send({ error: 'Invalid id' });
+    }
+    const idLower = idRaw.toLowerCase();
 
     const result = await pool.query(
       `SELECT id, title, output, command, tags, exit_code, is_public, share_token, created_at
-       FROM entries WHERE (id = $1 OR id::text LIKE $2) AND user_id = $3`,
-      [id, `${id}%`, userId]
+       FROM entries
+       WHERE user_id = $1
+         AND (lower(id::text) = $2 OR lower(id::text) LIKE $3)`,
+      [userId, idLower, `${idLower}%`]
     );
 
     if (result.rows.length === 0) return reply.status(404).send({ error: 'Not found' });
+    if (result.rows.length > 1) return reply.status(400).send({ error: 'Ambiguous id prefix' });
     return reply.send(result.rows[0]);
   });
 

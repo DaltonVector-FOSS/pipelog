@@ -1,5 +1,6 @@
 use crate::config;
 use anyhow::{anyhow, Result};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -32,6 +33,31 @@ pub struct Client {
     inner: reqwest::Client,
     api_url: String,
     token: String,
+}
+
+/// Standard UUID string (with hyphens) or 32 lowercase hex chars (no hyphens).
+fn is_likely_full_uuid(id: &str) -> bool {
+    let s = id.to_lowercase();
+    if s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return true;
+    }
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    let widths = [8usize, 4, 4, 4, 12];
+    widths
+        .iter()
+        .zip(parts.iter())
+        .all(|(&n, part)| part.len() == n && part.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Avoid `GET /entries/:id` for short hex fragments; some APIs error instead of 404.
+fn should_resolve_entry_via_list_only(id: &str) -> bool {
+    let s = id.trim();
+    s.len() >= 4
+        && s.chars().all(|c| c.is_ascii_hexdigit())
+        && !is_likely_full_uuid(s)
 }
 
 impl Client {
@@ -93,20 +119,56 @@ impl Client {
     }
 
     pub async fn get_entry(&self, id: &str) -> Result<Entry> {
+        let trimmed = id.trim();
+        if should_resolve_entry_via_list_only(trimmed) {
+            return self.unique_prefix_match_from_list(trimmed).await;
+        }
+
         let res = self
             .inner
-            .get(format!("{}/entries/{}", self.api_url, id))
+            .get(format!("{}/entries/{}", self.api_url, trimmed))
             .header("Authorization", self.auth_header())
             .send()
             .await?;
 
-        if !res.status().is_success() {
+        if res.status().is_success() {
+            return Ok(res.json().await?);
+        }
+        if res.status() == StatusCode::NOT_FOUND {
             return Err(anyhow!("Entry not found"));
         }
-        Ok(res.json().await?)
+        let status = res.status();
+        let msg = res.text().await.unwrap_or_default();
+        Err(anyhow!("Failed to load entry: {} {}", status, msg))
+    }
+
+    async fn unique_prefix_match_from_list(&self, id: &str) -> Result<Entry> {
+        let needle = id.trim().to_lowercase();
+        if needle.len() < 4 || !needle.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(anyhow!("Entry not found"));
+        }
+        const LIST_LIMIT: u32 = 100;
+        let entries = self.list_entries(None, LIST_LIMIT).await?;
+        let mut matches: Vec<Entry> = entries
+            .into_iter()
+            .filter(|e| e.id.to_lowercase().starts_with(&needle))
+            .collect();
+        match matches.len() {
+            0 => Err(anyhow!("Entry not found")),
+            1 => Ok(matches.pop().expect("length checked")),
+            n => Err(anyhow!(
+                "Ambiguous id prefix ({} entries match). Use more hex characters or the full id.",
+                n
+            )),
+        }
+    }
+
+    async fn resolve_id_for_mutation(&self, id: &str) -> Result<String> {
+        Ok(self.get_entry(id).await?.id)
     }
 
     pub async fn share_entry(&self, id: &str) -> Result<Entry> {
+        let id = self.resolve_id_for_mutation(id).await?;
         let res = self
             .inner
             .post(format!("{}/entries/{}/share", self.api_url, id))
@@ -117,6 +179,7 @@ impl Client {
     }
 
     pub async fn delete_entry(&self, id: &str) -> Result<()> {
+        let id = self.resolve_id_for_mutation(id).await?;
         self.inner
             .delete(format!("{}/entries/{}", self.api_url, id))
             .header("Authorization", self.auth_header())
@@ -126,6 +189,7 @@ impl Client {
     }
 
     pub async fn update_tags(&self, id: &str, add: Vec<String>, remove: Vec<String>) -> Result<()> {
+        let id = self.resolve_id_for_mutation(id).await?;
         self.inner
             .patch(format!("{}/entries/{}/tags", self.api_url, id))
             .header("Authorization", self.auth_header())
