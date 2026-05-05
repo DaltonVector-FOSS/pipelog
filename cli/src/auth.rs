@@ -43,10 +43,10 @@ pub async fn login() -> Result<()> {
     println!();
     println!(
         "{}",
-        "zsh users: enable pipeline command capture (append once, then reload):".dimmed()
+        "Run once (zsh — captures command in pipelines):".dimmed()
     );
-    println!("{}", "  pipelog init zsh >> ~/.zshrc".cyan());
-    println!("{}", "  source ~/.zshrc".cyan());
+    println!("{}", "pipelog init zsh >> ~/.zshrc".cyan());
+    println!("{}", "source ~/.zshrc".cyan());
     Ok(())
 }
 
