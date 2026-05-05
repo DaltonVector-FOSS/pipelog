@@ -1,0 +1,49 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.pyre/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+.cache/
+
+# Build output
+dist/
+build/
+coverage/
+target/
+.next/
+.nuxt/
+.svelte-kit/
+
+# Environment and local config
+.env
+.env.*
+*.local
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+*.swo
