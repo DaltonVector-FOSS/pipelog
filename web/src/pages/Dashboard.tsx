@@ -100,7 +100,7 @@ export function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[#080808] text-white flex flex-col" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+    <div className="h-screen bg-[#080808] text-white flex flex-col" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
       {/* Header */}
       <header className="border-b border-[#1a1a1a] px-6 py-4 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -163,7 +163,7 @@ export function Dashboard() {
           )}
 
           {/* Entry list */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto overscroll-contain">
             {loading ? (
               <div className="p-6 text-[#333] text-xs text-center">loading...</div>
             ) : entries.length === 0 ? (
@@ -265,7 +265,7 @@ export function Dashboard() {
               </div>
 
               {/* Output */}
-              <div className="flex-1 overflow-auto p-6">
+              <div className="flex-1 overflow-auto overscroll-contain p-6">
                 <pre className="text-[#d4d4d4] text-xs leading-relaxed whitespace-pre-wrap break-all font-mono">
                   {selected.output}
                 </pre>

@@ -38,115 +38,122 @@ const getStartedSteps = [
 
 export function GetStarted() {
   return (
-    <div className="min-h-screen bg-[#080808] text-white flex flex-col">
-      <header className="border-b border-[#1a1a1a]">
-        <div className="mx-auto max-w-6xl px-4 py-5 flex items-center justify-between gap-4">
-          <Link to="/" className="inline-flex items-center gap-2 hover:opacity-90 transition-opacity">
-            <span className="text-[#00ff88] font-mono text-2xl font-bold">pipe</span>
+    <div className="min-h-screen bg-transparent relative flex flex-col text-white font-sans">
+      <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-brand/5 rounded-full blur-[100px] -z-10 pointer-events-none" />
+
+      <header className="border-b border-border/50 bg-background/50 backdrop-blur-md sticky top-0 z-50">
+        <div className="mx-auto max-w-6xl px-4 py-4 flex items-center justify-between gap-4">
+          <Link to="/" className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity">
+            <span className="text-brand font-mono text-2xl font-bold text-glow">pipe</span>
             <span className="text-white font-mono text-2xl font-bold">log</span>
-            <span className="text-[#00ff88] font-mono text-2xl">_</span>
+            <span className="text-brand font-mono text-2xl">_</span>
           </Link>
-          <div className="flex items-center gap-3 sm:gap-4 flex-wrap justify-end">
+          <div className="flex items-center gap-4 sm:gap-6 flex-wrap justify-end">
             <Link
               to="/get-started"
-              className="text-[#00ff88] text-sm font-mono font-semibold transition-colors"
+              className="text-brand text-sm font-medium transition-colors"
             >
-              get started
+              Get Started
             </Link>
             <Link
               to="/install"
-              className="text-[#9a9a9a] hover:text-[#00ff88] text-sm font-mono transition-colors"
+              className="text-textMuted hover:text-brand text-sm font-medium transition-colors"
             >
-              install
+              Install
             </Link>
             <Link
               to="/login"
-              className="text-[#9a9a9a] hover:text-white text-sm font-mono transition-colors"
+              className="text-textMuted hover:text-white text-sm font-medium transition-colors"
             >
-              login
+              Log In
             </Link>
             <Link
               to="/register"
-              className="bg-[#00ff88] text-black font-mono font-bold text-sm px-4 py-2 rounded hover:bg-[#00e87a] transition-colors"
+              className="bg-brand text-background font-bold text-sm px-5 py-2 rounded-md hover:bg-brand-hover transition-all"
             >
-              create account
+              Sign Up
             </Link>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl w-full px-4 py-12 md:py-20 flex-1">
-        <div className="max-w-3xl mx-auto text-center">
-          <p className="text-[#00ff88] font-mono text-xs uppercase tracking-[0.25em]">setup guide</p>
-          <h1 className="mt-3 text-3xl md:text-4xl font-mono font-bold leading-tight">Get started</h1>
-          <p className="mt-4 text-sm font-mono text-[#9a9a9a] leading-relaxed">
-            From zero to your first captured log in a few steps.
+      <main className="mx-auto max-w-4xl w-full px-4 py-16 md:py-24 flex-1 relative z-10 animate-fade-in">
+        <div className="text-center mb-16">
+          <div className="inline-block px-3 py-1 rounded-full border border-brand/30 bg-brand/5 text-brand font-mono text-xs uppercase tracking-widest mb-4">
+            Setup Guide
+          </div>
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight">From zero to logs</h1>
+          <p className="mt-4 text-textMuted text-lg">
+            Follow these steps to start capturing your operational data.
           </p>
         </div>
 
-        <ol className="mt-12 max-w-3xl mx-auto space-y-5 list-none p-0 m-0">
+        <div className="relative border-l border-border/50 ml-4 md:ml-8 pl-8 md:pl-12 space-y-12 pb-8">
           {getStartedSteps.map((step, index) => (
-            <li key={step.title}>
-              <article className="rounded border border-[#1e1e1e] bg-[#0d0d0d] p-5">
-                <div className="flex flex-wrap items-start gap-3">
-                  <span className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded bg-[#00ff88]/15 font-mono text-sm font-bold text-[#00ff88]">
-                    {index + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="font-mono text-base font-semibold text-white">{step.title}</h2>
-                    <p className="mt-2 text-sm font-mono text-[#9a9a9a] leading-relaxed">{step.body}</p>
-                    {'command' in step && step.command ? (
-                      <div className="mt-3 relative rounded border border-[#1a1a1a] bg-[#080808]">
-                        <div className="absolute top-2 right-2 z-10">
-                          <CopyCommandButton text={step.command} />
-                        </div>
-                        <pre className="overflow-x-auto p-3 pr-24 text-[#00ff88] text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">
-                          {step.command}
-                        </pre>
-                      </div>
-                    ) : null}
-                    {'href' in step && step.href ? (
-                      <div className="mt-4">
-                        <Link
-                          to={step.href}
-                          className="inline-flex rounded border border-[#00ff88] bg-[#00ff88]/10 px-3 py-1.5 text-xs font-mono font-semibold text-[#00ff88] hover:bg-[#00ff88]/20 transition-colors"
-                        >
-                          {step.cta}
-                        </Link>
-                      </div>
-                    ) : null}
-                    {step.title === 'Install the CLI' ? (
-                      <p className="mt-4 text-xs font-mono text-[#666]">
-                        <Link
-                          to="/install"
-                          className="text-[#00ff88] underline decoration-[#00ff88]/40 underline-offset-2 hover:decoration-[#00ff88]"
-                        >
-                          Open install page
-                        </Link>
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              </article>
-            </li>
-          ))}
-        </ol>
+            <div key={step.title} className="relative">
+              {/* Step Marker */}
+              <div className="absolute -left-[45px] md:-left-[61px] top-0 w-8 h-8 rounded-full bg-surface border border-brand text-brand font-mono flex items-center justify-center font-bold text-sm box-glow z-10">
+                {index + 1}
+              </div>
 
-        <p className="mt-12 text-center">
+              <article className="glass-panel p-6 rounded-xl hover:border-brand/30 transition-colors">
+                <h2 className="text-xl font-semibold mb-2">{step.title}</h2>
+                <p className="text-textMuted mb-4 leading-relaxed">{step.body}</p>
+                
+                {'command' in step && step.command ? (
+                  <div className="relative rounded-lg border border-border bg-surface/80 overflow-hidden group">
+                    <div className="absolute top-0 left-0 w-full h-8 bg-[#1a1a1a] flex items-center px-3 border-b border-border/50">
+                      <div className="flex gap-1.5">
+                        <div className="w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
+                        <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80"></div>
+                        <div className="w-2.5 h-2.5 rounded-full bg-green-500/80"></div>
+                      </div>
+                      <div className="absolute right-2 top-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <CopyCommandButton text={step.command} />
+                      </div>
+                    </div>
+                    <pre className="p-4 pt-12 text-brand text-sm font-mono whitespace-pre-wrap break-all overflow-x-auto">
+                      <span className="text-textMuted mr-2">$</span>{step.command}
+                    </pre>
+                  </div>
+                ) : null}
+
+                {'href' in step && step.href ? (
+                  <Link
+                    to={step.href}
+                    className="inline-flex items-center gap-2 rounded-md bg-brand text-background px-4 py-2 text-sm font-bold hover:bg-brand-hover hover:box-glow transition-all"
+                  >
+                    {step.cta} →
+                  </Link>
+                ) : null}
+
+                {step.title === 'Install the CLI' ? (
+                  <Link
+                    to="/install"
+                    className="inline-block mt-2 text-brand hover:text-brand-hover hover:underline underline-offset-4 text-sm font-medium transition-colors"
+                  >
+                    View detailed install instructions →
+                  </Link>
+                ) : null}
+              </article>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-16 text-center">
           <Link
             to="/"
-            className="text-sm font-mono text-[#9a9a9a] hover:text-[#00ff88] transition-colors"
+            className="inline-flex items-center gap-2 text-textMuted hover:text-white transition-colors border border-border/50 bg-surface/30 px-5 py-2.5 rounded-full hover:bg-surface"
           >
-            ← Back to home
+            ← Back to Home
           </Link>
-        </p>
+        </div>
       </main>
 
-      <footer className="border-t border-[#1a1a1a] mt-auto">
-        <div className="mx-auto max-w-6xl px-4 py-6 text-center text-xs text-[#666] font-mono">
-          <span>PipeLog</span>
-          <span className="mx-2 text-[#333]">|</span>
-          <span>Built for faster incident response</span>
+      <footer className="border-t border-border/50 bg-surface/30 mt-auto relative z-10">
+        <div className="mx-auto max-w-6xl px-4 py-6 flex items-center justify-between text-xs text-textMuted font-medium">
+          <div>PipeLog</div>
+          <div>Built for faster incident response</div>
         </div>
       </footer>
     </div>

@@ -11,34 +11,34 @@ const INSTALL_WINDOWS_PS7 =
 
 function MarketingHeader() {
   return (
-    <header className="border-b border-[#1a1a1a]">
-      <div className="mx-auto max-w-6xl px-4 py-5 flex items-center justify-between gap-4">
-        <Link to="/" className="inline-flex items-center gap-2 hover:opacity-90 transition-opacity">
-          <span className="text-[#00ff88] font-mono text-2xl font-bold">pipe</span>
+    <header className="border-b border-border/50 bg-background/50 backdrop-blur-md sticky top-0 z-50">
+      <div className="mx-auto max-w-6xl px-4 py-4 flex items-center justify-between gap-4">
+        <Link to="/" className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity">
+          <span className="text-brand font-mono text-2xl font-bold text-glow">pipe</span>
           <span className="text-white font-mono text-2xl font-bold">log</span>
-          <span className="text-[#00ff88] font-mono text-2xl">_</span>
+          <span className="text-brand font-mono text-2xl">_</span>
         </Link>
-        <div className="flex items-center gap-3 sm:gap-4 flex-wrap justify-end">
+        <div className="flex items-center gap-4 sm:gap-6 flex-wrap justify-end">
           <Link
             to="/get-started"
-            className="text-[#9a9a9a] hover:text-[#00ff88] text-sm font-mono transition-colors"
+            className="text-textMuted hover:text-brand text-sm font-medium transition-colors"
           >
-            get started
+            Get Started
           </Link>
-          <Link to="/install" className="text-[#00ff88] text-sm font-mono font-semibold">
-            install
+          <Link to="/install" className="text-brand text-sm font-medium transition-colors">
+            Install
           </Link>
           <Link
             to="/login"
-            className="text-[#9a9a9a] hover:text-white text-sm font-mono transition-colors"
+            className="text-textMuted hover:text-white text-sm font-medium transition-colors"
           >
-            login
+            Log In
           </Link>
           <Link
             to="/register"
-            className="bg-[#00ff88] text-black font-mono font-bold text-sm px-4 py-2 rounded hover:bg-[#00e87a] transition-colors"
+            className="bg-brand text-background font-bold text-sm px-5 py-2 rounded-md hover:bg-brand-hover transition-all"
           >
-            create account
+            Sign Up
           </Link>
         </div>
       </div>
@@ -48,90 +48,105 @@ function MarketingHeader() {
 
 function MarketingFooter() {
   return (
-    <footer className="border-t border-[#1a1a1a] mt-auto">
-      <div className="mx-auto max-w-6xl px-4 py-6 text-center text-xs text-[#666] font-mono">
-        <span>PipeLog</span>
-        <span className="mx-2 text-[#333]">|</span>
-        <span>Built for faster incident response</span>
+    <footer className="border-t border-border/50 bg-surface/30 mt-auto relative z-10">
+      <div className="mx-auto max-w-6xl px-4 py-6 flex items-center justify-between text-xs text-textMuted font-medium">
+        <div>PipeLog</div>
+        <div>Built for faster incident response</div>
       </div>
     </footer>
   );
 }
 
+function TerminalBlock({ title, subtitle, command }: { title: string, subtitle: string, command: string }) {
+  return (
+    <div className="glass-panel p-6 rounded-xl hover:border-brand/30 transition-colors animate-fade-in-up">
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold text-white tracking-wide">
+          {title}
+        </h2>
+        <p className="mt-1 text-sm text-textMuted leading-relaxed">
+          {subtitle}
+        </p>
+      </div>
+      <div className="relative rounded-lg border border-border bg-surface/80 overflow-hidden group">
+        <div className="absolute top-0 left-0 w-full h-8 bg-[#1a1a1a] flex items-center px-3 border-b border-border/50">
+          <div className="flex gap-1.5">
+            <div className="w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
+            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80"></div>
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500/80"></div>
+          </div>
+          <div className="absolute right-2 top-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+            <CopyCommandButton text={command} />
+          </div>
+        </div>
+        <pre className="p-4 pt-12 text-brand text-sm font-mono whitespace-pre-wrap break-all overflow-x-auto">
+          <span className="text-textMuted mr-2">$</span>{command}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 export function InstallCli() {
   return (
-    <div className="min-h-screen bg-[#080808] text-white flex flex-col">
+    <div className="min-h-screen bg-transparent relative flex flex-col text-white font-sans">
+      <div className="absolute top-1/4 left-0 w-[500px] h-[500px] bg-brand/5 rounded-full blur-[100px] -z-10 pointer-events-none" />
+
       <MarketingHeader />
 
-      <main className="mx-auto max-w-6xl w-full px-4 py-12 md:py-20 flex-1">
-        <div className="max-w-3xl mx-auto text-center">
-          <p className="text-[#00ff88] font-mono text-xs uppercase tracking-[0.25em]">cli</p>
-          <h1 className="mt-3 text-3xl md:text-4xl font-mono font-bold leading-tight">Install the CLI</h1>
-          <p className="mt-4 text-sm font-mono text-[#9a9a9a] leading-relaxed">
+      <main className="mx-auto max-w-4xl w-full px-4 py-16 md:py-24 flex-1 relative z-10 animate-fade-in">
+        <div className="text-center mb-16">
+          <div className="inline-block px-3 py-1 rounded-full border border-brand/30 bg-brand/5 text-brand font-mono text-xs uppercase tracking-widest mb-4">
+            CLI
+          </div>
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight">Install PipeLog</h1>
+          <p className="mt-4 text-textMuted text-lg leading-relaxed max-w-2xl mx-auto">
             macOS, Linux, or Windows: run the command for your OS, then{' '}
-            <code className="text-[#00ff88]">pipelog auth login</code>. Need the full walkthrough? See the{' '}
+            <code className="bg-surface px-1.5 py-0.5 rounded text-brand font-mono text-sm border border-border">pipelog auth login</code>. 
+            Need the full walkthrough? See the{' '}
             <Link
               to="/get-started"
-              className="text-[#00ff88] underline decoration-[#00ff88]/40 underline-offset-2 hover:decoration-[#00ff88]"
+              className="text-brand hover:text-brand-hover hover:underline underline-offset-4 font-medium transition-colors"
             >
               setup guide
-            </Link>
-            .
+            </Link>.
           </p>
         </div>
 
-        <div className="mt-12 max-w-3xl mx-auto space-y-6">
-          <div className="rounded border border-[#1e1e1e] bg-[#0d0d0d] p-4">
-            <h2 className="text-center text-xs font-mono font-semibold text-[#9a9a9a] uppercase tracking-wide">
-              macOS &amp; Linux
-            </h2>
-            <p className="mt-2 text-center text-[10px] font-mono text-[#666]">
-              bash · zsh · any POSIX shell with curl and tar
-            </p>
-            <div className="mt-3 relative rounded border border-[#1a1a1a] bg-[#080808]">
-              <div className="absolute top-2 right-2 z-10">
-                <CopyCommandButton text={INSTALL_UNIX} />
-              </div>
-              <pre className="overflow-x-auto p-3 pr-24 text-[#00ff88] text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">
-                {INSTALL_UNIX}
-              </pre>
-            </div>
-          </div>
+        <div className="max-w-3xl mx-auto space-y-8">
+          <TerminalBlock 
+            title="macOS & Linux" 
+            subtitle="bash · zsh · any POSIX shell with curl and tar" 
+            command={INSTALL_UNIX} 
+          />
 
-          <div className="rounded border border-[#1e1e1e] bg-[#0d0d0d] p-4">
-            <h2 className="text-center text-xs font-mono font-semibold text-[#9a9a9a] uppercase tracking-wide">
-              Windows
-            </h2>
-            <p className="mt-2 text-center text-[10px] font-mono text-[#666]">
-              CMD, Run dialog, or Windows PowerShell 5.1+ (no WSL required). Downloads the MinGW{' '}
-              <code className="text-[#9a9a9a]">x86_64-pc-windows-gnu</code> zip from GitHub Releases.
-            </p>
-            <div className="mt-3 relative rounded border border-[#1a1a1a] bg-[#080808]">
-              <div className="absolute top-2 right-2 z-10">
-                <CopyCommandButton text={INSTALL_WINDOWS_PS51} />
-              </div>
-              <pre className="overflow-x-auto p-3 pr-24 text-[#00ff88] text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">
-                {INSTALL_WINDOWS_PS51}
-              </pre>
-            </div>
-            <div className="mt-3 flex flex-col items-center gap-2 text-center text-[10px] font-mono text-[#666] leading-relaxed sm:flex-row sm:justify-center sm:gap-3">
-              <span>
-                PowerShell 7+ (optional):{' '}
-                <code className="text-[#9a9a9a] break-all">{INSTALL_WINDOWS_PS7}</code>
-              </span>
-              <CopyCommandButton text={INSTALL_WINDOWS_PS7} />
-            </div>
+          <TerminalBlock 
+            title="Windows (PowerShell 5.1+)" 
+            subtitle="CMD, Run dialog, or Windows PowerShell 5.1+ (no WSL required)." 
+            command={INSTALL_WINDOWS_PS51} 
+          />
+          
+          <div className="glass-panel p-6 rounded-xl border-border/50">
+             <h3 className="text-sm font-medium text-textMuted mb-3">PowerShell 7+ (Optional):</h3>
+             <div className="flex flex-col sm:flex-row items-center gap-3">
+               <code className="flex-1 bg-surface/80 p-3 rounded-md border border-border font-mono text-brand text-xs break-all block w-full">
+                 {INSTALL_WINDOWS_PS7}
+               </code>
+               <div className="w-full sm:w-auto flex justify-end">
+                 <CopyCommandButton text={INSTALL_WINDOWS_PS7} />
+               </div>
+             </div>
           </div>
         </div>
 
-        <p className="mt-12 text-center">
+        <div className="mt-16 text-center">
           <Link
             to="/"
-            className="text-sm font-mono text-[#9a9a9a] hover:text-[#00ff88] transition-colors"
+            className="inline-flex items-center gap-2 text-textMuted hover:text-white transition-colors border border-border/50 bg-surface/30 px-5 py-2.5 rounded-full hover:bg-surface"
           >
-            ← Back to home
+            ← Back to Home
           </Link>
-        </p>
+        </div>
       </main>
 
       <MarketingFooter />
