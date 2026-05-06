@@ -2,8 +2,13 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-const DEFAULT_WEB_URL: &str = "https://pipelog-8a15f.web.app";
-const LEGACY_WEB_URLS: [&str; 2] = ["http://localhost:5174", "http://localhost:5173"];
+const DEFAULT_WEB_URL: &str = "https://pipelog.daltonvector.ai";
+const LEGACY_WEB_URLS: [&str; 4] = [
+    "http://localhost:5174",
+    "http://localhost:5173",
+    "https://pipelog-8a15f.web.app",
+    "https://pipelog-8a15f.web.app/",
+];
 const DEFAULT_API_URL: &str = "https://api.pipelog.daltonvector.ai";
 const LEGACY_API_URLS: [&str; 2] = ["http://localhost:3001", "http://127.0.0.1:3001"];
 

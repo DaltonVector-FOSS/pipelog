@@ -21,6 +21,46 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || err "Missing required dependency: $1"
 }
 
+# Strip surrounding whitespace and a single leading "v" for comparison.
+normalize_version() {
+  local v="$1"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  case "$v" in
+    v*) v="${v#v}" ;;
+  esac
+  printf '%s' "$v"
+}
+
+# Final URL after redirects, e.g. .../releases/tag/v0.1.0
+latest_release_tag_raw() {
+  local final tag
+  final="$(
+    curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest"
+  )" || err "Failed to resolve latest release for ${REPO}"
+  tag="${final#*/releases/tag/}"
+  if [ "$tag" = "$final" ]; then
+    err "Could not parse release tag from URL: ${final}"
+  fi
+  printf '%s' "$tag"
+}
+
+desired_normalized() {
+  local raw
+  if [ "$VERSION" = "latest" ]; then
+    raw="$(latest_release_tag_raw)"
+  else
+    raw="$(resolve_version)"
+  fi
+  normalize_version "$raw"
+}
+
+installed_version() {
+  local bin="$1" out
+  out="$("$bin" --version 2>/dev/null)" || err "Failed to read version from ${bin}"
+  printf '%s' "$out" | awk 'NF { print $NF }'
+}
+
 detect_os() {
   os="$(uname -s 2>/dev/null || true)"
   case "$os" in
@@ -96,9 +136,28 @@ main() {
   need_cmd tar
   need_cmd uname
   need_cmd mktemp
+  need_cmd awk
+
   os="$(detect_os)"
   arch="$(detect_arch)"
   target="${arch}-${os}"
+
+  bin_path="${INSTALL_DIR}/${BIN_NAME}"
+
+  if [ -n "$DOWNLOAD_URL" ]; then
+    log "Installing ${BIN_NAME} (custom download URL; version check skipped)..."
+  elif [ -x "$bin_path" ]; then
+    d="$(desired_normalized)"
+    c="$(normalize_version "$(installed_version "$bin_path")")"
+    if [ "$c" = "$d" ]; then
+      log "${BIN_NAME} is already installed and up to date (${c})."
+      exit 0
+    fi
+    log "${BIN_NAME} is installed (${c}); updating to ${d}..."
+  else
+    log "Installing ${BIN_NAME}..."
+  fi
+
   if [ -n "$DOWNLOAD_URL" ]; then
     url="$DOWNLOAD_URL"
   else
@@ -112,7 +171,11 @@ main() {
   }
   trap cleanup EXIT INT TERM
 
-  log "Downloading ${BIN_NAME} (${target}) from GitHub Releases..."
+  if [ -n "$DOWNLOAD_URL" ]; then
+    log "Downloading ${BIN_NAME} (${target})..."
+  else
+    log "Downloading ${BIN_NAME} (${target}) from GitHub Releases..."
+  fi
   curl -fsSL "$url" -o "$archive" || err "Failed to download release asset from: $url"
   [ -s "$archive" ] || err "Downloaded archive is empty."
 
