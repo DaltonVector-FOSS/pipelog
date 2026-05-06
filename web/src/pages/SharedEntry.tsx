@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
+import toast from 'react-hot-toast';
 import { api, type Entry } from '../api';
 
 export function SharedEntry() {
@@ -13,6 +14,15 @@ export function SharedEntry() {
       .then(r => setEntry(r.data))
       .catch(() => setError(true));
   }, [token]);
+
+  const copyOutputToClipboard = async (output: string) => {
+    try {
+      await navigator.clipboard.writeText(output);
+      toast.success('Output copied');
+    } catch {
+      toast.error('Could not copy');
+    }
+  };
 
   if (error) {
     return (
@@ -111,9 +121,16 @@ export function SharedEntry() {
                 <div className="w-3 h-3 rounded-full bg-[#ffbd2e]"></div>
                 <div className="w-3 h-3 rounded-full bg-[#27c93f]"></div>
               </div>
-              <div className="absolute left-1/2 -translate-x-1/2 text-[10px] text-textMuted font-mono">
+              <div className="absolute left-1/2 -translate-x-1/2 text-[10px] text-textMuted font-mono pointer-events-none">
                 pipelog — {entry.id?.substring(0, 8) || 'shared'}
               </div>
+              <button
+                type="button"
+                onClick={() => copyOutputToClipboard(entry.output)}
+                className="ml-auto text-[10px] font-mono uppercase tracking-wide text-textMuted border border-border/60 hover:border-brand/50 hover:text-brand px-2.5 py-1 rounded transition-colors"
+              >
+                copy output
+              </button>
            </div>
            
            {/* Log Content */}
