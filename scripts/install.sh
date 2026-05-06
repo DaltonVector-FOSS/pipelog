@@ -143,6 +143,10 @@ main() {
   target="${arch}-${os}"
 
   bin_path="${INSTALL_DIR}/${BIN_NAME}"
+  had_existing_install=false
+  if [ -x "$bin_path" ]; then
+    had_existing_install=true
+  fi
 
   if [ -n "$DOWNLOAD_URL" ]; then
     log "Installing ${BIN_NAME} (custom download URL; version check skipped)..."
@@ -183,12 +187,14 @@ main() {
   install_binary "$extracted_bin"
 
   log "Installed ${BIN_NAME} to ${INSTALL_DIR}/${BIN_NAME}"
-  log ""
-  log "Verify install:"
-  log "  ${BIN_NAME} --version"
-  log ""
-  log "Next:"
-  log "  ${BIN_NAME} auth login"
+  if [ "$had_existing_install" = false ]; then
+    log ""
+    log "Verify install:"
+    log "  ${BIN_NAME} --version"
+    log ""
+    log "Next:"
+    log "  ${BIN_NAME} auth login"
+  fi
 }
 
 main "$@"
