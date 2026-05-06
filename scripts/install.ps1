@@ -7,7 +7,7 @@
   Expects release assets named: pipelog-<rust-triple>.zip
   Example: pipelog-x86_64-pc-windows-gnu.zip (archive contains pipelog.exe)
 
-  Set PIPELOG_DOWNLOAD_URL to bypass GitHub URL logic.
+  Set PIPELOG_DOWNLOAD_URL to bypass GitHub URL logic (version check skipped).
   Override asset triple with PIPELOG_WINDOWS_TRIPLE (e.g. x86_64-pc-windows-msvc) if you ship MSVC builds instead.
   Set PIPELOG_UPDATE_PATH=0 to skip adding the install dir to your user PATH.
 
@@ -27,6 +27,9 @@ $InstallDir = if ($env:PIPELOG_INSTALL_DIR) { $env:PIPELOG_INSTALL_DIR } else { 
 $DownloadUrl = if ($env:PIPELOG_DOWNLOAD_URL) { $env:PIPELOG_DOWNLOAD_URL } else { '' }
 $BinName = 'pipelog.exe'
 
+# GitHub API requests should send a User-Agent (some environments return 403 otherwise).
+$script:GitHubApiUserAgent = 'pipelog-windows-install-script'
+
 function Write-Info([string] $Message) {
     Write-Host $Message
 }
@@ -36,10 +39,83 @@ function Fail([string] $Message) {
     exit 1
 }
 
+# Strip surrounding whitespace and a single leading "v" (matches install.sh normalize_version).
+function Normalize-Version([string] $Value) {
+    if ($null -eq $Value) { return '' }
+    $v = $Value.Trim()
+    if ($v.StartsWith('v', [StringComparison]::OrdinalIgnoreCase)) {
+        $v = $v.Substring(1).Trim()
+    }
+    return $v
+}
+
 function Resolve-VersionTag {
     if ($Version -eq 'latest') { return 'latest' }
     if ($Version.StartsWith('v')) { return $Version }
     return "v$Version"
+}
+
+function Get-LatestNormalizedTag {
+    $api = "https://api.github.com/repos/$Repo/releases/latest"
+    $headers = @{
+        'User-Agent' = $script:GitHubApiUserAgent
+        'Accept'     = 'application/vnd.github+json'
+    }
+    try {
+        $rel = Invoke-RestMethod -Uri $api -Headers $headers -Method Get
+        if (-not $rel.tag_name) {
+            Fail "GitHub API returned no tag_name for $Repo."
+        }
+        return (Normalize-Version $rel.tag_name)
+    } catch {
+        Fail "Could not resolve latest release for $Repo. Set PIPELOG_VERSION to a tag (e.g. 0.1.0) or PIPELOG_DOWNLOAD_URL. Details: $_"
+    }
+}
+
+function Get-DesiredNormalized {
+    if ($Version -eq 'latest') {
+        return Get-LatestNormalizedTag
+    }
+    return (Normalize-Version (Resolve-VersionTag))
+}
+
+# Last whitespace-separated token of `pipelog --version` output (matches install.sh installed_version awk).
+function Get-InstalledVersionLastToken([string] $ExePath) {
+    try {
+        $output = (& $ExePath @('--version') 2>&1 | ForEach-Object { "$_" }) -join "`n"
+    } catch {
+        Fail "Failed to read version from ${ExePath}: $_"
+    }
+    $output = $output.Trim()
+    if (-not $output) {
+        Fail "Failed to read version from ${ExePath} (empty output)."
+    }
+    $tokens = @($output -split '\s+' | Where-Object { $_ })
+    if ($tokens.Length -eq 0) {
+        Fail "Failed to parse version from ${ExePath}: $output"
+    }
+    return $tokens[$tokens.Length - 1]
+}
+
+# Mirrors Rust dirs::config_dir() + pipelog/config.json on Windows (%APPDATA%\Roaming).
+function Test-PipelogCliAuthenticated {
+    if (-not $env:APPDATA) {
+        return $false
+    }
+    $cfg = Join-Path $env:APPDATA 'pipelog\config.json'
+    if (-not (Test-Path -LiteralPath $cfg)) {
+        return $false
+    }
+    try {
+        $json = Get-Content -LiteralPath $cfg -Raw -ErrorAction Stop | ConvertFrom-Json
+        $t = $json.auth_token
+        if ($null -eq $t) {
+            return $false
+        }
+        return ($t.ToString().Trim().Length -gt 0)
+    } catch {
+        return $false
+    }
 }
 
 function Get-WindowsTriple {
@@ -101,15 +177,39 @@ function Main {
         Fail 'This installer is for Windows only.'
     }
 
+    $dst = Join-Path $InstallDir $BinName
+    $hadExisting = Test-Path -LiteralPath $dst
+
+    if (-not $DownloadUrl) {
+        if (Test-Path -LiteralPath $dst) {
+            $desired = Get-DesiredNormalized
+            $rawInstalled = Get-InstalledVersionLastToken $dst
+            $current = Normalize-Version $rawInstalled
+            if ($current -eq $desired) {
+                Write-Info "$BinName is already installed and up to date ($current)."
+                exit 0
+            }
+            Write-Info "$BinName is installed ($current); updating to $desired..."
+        }
+    } else {
+        Write-Info "Installing $BinName (custom download URL; version check skipped)..."
+    }
+
     $triple = Get-WindowsTriple
     $url = Get-DownloadUrl $triple
-    $workDir = Join-Path ([System.IO.Path]::GetTempPath()) ("pipelog-install-" + [Guid]::NewGuid().ToString('n'))
+    $workDir = Join-Path ([System.IO.Path]::GetTempPath()) ('pipelog-install-' + [Guid]::NewGuid().ToString('n'))
     New-Item -ItemType Directory -Path $workDir | Out-Null
     try {
+        if (-not $DownloadUrl) {
+            Write-Info "Downloading $BinName ($triple) from GitHub Releases..."
+        } else {
+            Write-Info "Downloading $BinName ($triple)..."
+        }
         $zipPath = Join-Path $workDir 'pipelog.zip'
-        Write-Info "Downloading $BinName ($triple) from GitHub Releases..."
         try {
-            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -Headers @{
+                'User-Agent' = $script:GitHubApiUserAgent
+            }
         } catch {
             Fail "Failed to download release asset from: $url`n$_"
         }
@@ -125,7 +225,6 @@ function Main {
         if (-not (Test-Path -LiteralPath $InstallDir)) {
             New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
         }
-        $dst = Join-Path $InstallDir $BinName
         Copy-Item -LiteralPath $srcExe -Destination $dst -Force
 
         $addedPath = $false
@@ -134,16 +233,30 @@ function Main {
         }
 
         Write-Info "Installed $BinName to $dst"
-        Write-Info ''
-        Write-Info 'Verify (open a new terminal if PATH was just updated):'
-        Write-Info "  pipelog --version"
-        Write-Info ''
-        if ($addedPath) {
-            Write-Info "Added $InstallDir to your user PATH. Open a new PowerShell or CMD window."
+
+        if (-not $hadExisting) {
+            Write-Info ''
+            Write-Info 'Verify (open a new terminal if PATH was just updated):'
+            Write-Info '  pipelog --version'
             Write-Info ''
         }
-        Write-Info 'Next:'
-        Write-Info '  pipelog auth login'
+
+        if ($addedPath) {
+            Write-Info "Added $InstallDir to your user PATH. Open a new PowerShell or CMD window."
+            if (-not $hadExisting) {
+                Write-Info ''
+            }
+        }
+
+        # Match install.sh: only suggest login on fresh binary install — and skip if CLI config has a token.
+        if (-not $hadExisting) {
+            if (Test-PipelogCliAuthenticated) {
+                Write-Info 'Already signed in (CLI config found).'
+            } else {
+                Write-Info 'Next:'
+                Write-Info '  pipelog auth login'
+            }
+        }
     } finally {
         Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
     }
