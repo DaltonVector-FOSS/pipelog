@@ -1,6 +1,7 @@
 [package]
 name = "pipelog"
-version = "0.1.0"
+# Keep in sync with release tags: install.sh compares GitHub latest tag to `pipelog --version` (from this + CARGO_PKG_VERSION in main.rs).
+version = "0.1.1"
 edition = "2021"
 description = "Capture and share command output with your team"
 

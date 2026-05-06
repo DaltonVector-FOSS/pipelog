@@ -3,6 +3,7 @@ mod auth;
 mod capture;
 mod config;
 mod runner;
+mod shell_detect;
 
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -11,7 +12,7 @@ use colored::*;
 #[command(
     name = "pipelog",
     about = "Capture and share command output with your team",
-    version = "0.1.0"
+    version = env!("CARGO_PKG_VERSION")
 )]
 struct Cli {
     #[command(subcommand)]
@@ -92,8 +93,9 @@ enum Commands {
     Config,
     /// Print shell integration setup
     Init {
-        /// Shell type (currently: zsh)
-        #[arg(default_value = "zsh")]
+        /// Shell: zsh, bash, fish, powershell — or `auto` (from SHELL / PIPELOG_SHELL).
+        /// Set PIPELOG_SHELL to override detection.
+        #[arg(default_value = "auto")]
         shell: String,
     },
     /// Run a command, stream output live, and capture everything from start to end
@@ -169,7 +171,8 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&cfg)?);
         }
         Some(Commands::Init { shell }) => {
-            print_shell_init(&shell)?;
+            let resolved = shell_detect::resolve_init_shell_argument(&shell, cfg!(windows));
+            print_shell_init(&resolved)?;
         }
         Some(Commands::Run {
             title,
@@ -187,6 +190,14 @@ async fn main() -> anyhow::Result<()> {
 
 fn print_shell_init(shell: &str) -> anyhow::Result<()> {
     match shell {
+        "sh" | "dash" | "ash" | "ksh" | "mksh" | "yash" | "busybox" => {
+            return Err(anyhow::anyhow!(
+                "POSIX shells like '{}' don't support pipelog's interactive pipeline hook. \
+                 Use bash, zsh, fish, or PowerShell (`pipelog init <shell>`), \
+                 or pass the command explicitly (`pipelog --cmd '...'`).",
+                shell
+            ));
+        }
         "zsh" => {
             let snippet = r#"# pipelog shell integration (zsh)
 typeset -gx PIPELOG_LAST_COMMAND=""
@@ -204,7 +215,9 @@ pipelog() {
     local arg
     for arg in "$@"; do
       [[ "$arg" == "--cmd" ]] && has_cmd=1
-      [[ "$arg" == "--title" ]] && has_title=1
+      if [[ "$arg" == "--title" || "$arg" == "-t" ]]; then
+        has_title=1
+      fi
     done
 
     local left_cmd="${PIPELOG_LAST_COMMAND%%| pipelog*}"
@@ -226,6 +239,101 @@ pipelog() {
 
   command pipelog "$@"
 }
+"#;
+            println!("{}", snippet);
+        }
+        "bash" => {
+            // PROMPT_COMMAND runs before each prompt; capture the last history line as a
+            // lightweight preexec substitute (requires interactive bash with history enabled).
+            let snippet = r#"# pipelog shell integration (bash — interactive; enable history as usual)
+_pipelog_prompt_cmd() {
+  local h
+  h=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null) || return 0
+  export PIPELOG_LAST_COMMAND="$(sed -E 's/^[[:space:]]*[0-9]+[[:space:]]+//' <<<"$h")"
+}
+case ":${PROMPT_COMMAND:-}:" in
+  *":_pipelog_prompt_cmd:"*) ;;
+  *) PROMPT_COMMAND="_pipelog_prompt_cmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
+esac
+
+pipelog() {
+  if [[ ! -t 0 ]]; then
+    local has_cmd=0
+    local has_title=0
+    local arg
+    for arg in "$@"; do
+      [[ "$arg" == "--cmd" ]] && has_cmd=1
+      if [[ "$arg" == "--title" || "$arg" == "-t" ]]; then
+        has_title=1
+      fi
+    done
+
+    local left_cmd="${PIPELOG_LAST_COMMAND%%| pipelog*}"
+    left_cmd="${left_cmd%%| /usr/local/bin/pipelog*}"
+    left_cmd="${left_cmd%%| ./target/release/pipelog*}"
+    left_cmd="${left_cmd%%| */pipelog*}"
+    left_cmd="${left_cmd## }"
+    left_cmd="${left_cmd%% }"
+
+    if [[ $has_cmd -eq 0 && -n "$left_cmd" ]]; then
+      if [[ $has_title -eq 0 ]]; then
+        command pipelog --cmd "$left_cmd" --title "$left_cmd" "$@"
+      else
+        command pipelog --cmd "$left_cmd" "$@"
+      fi
+      return $?
+    fi
+  fi
+
+  command pipelog "$@"
+}
+"#;
+            println!("{}", snippet);
+        }
+        "fish" => {
+            let snippet = r#"# pipelog shell integration (fish 3+)
+
+function __pipelog_fish_preexec --on-event fish_preexec
+    set -gx PIPELOG_LAST_COMMAND (commandline)
+end
+
+function pipelog
+    set -l exe (command -v pipelog 2>/dev/null)
+    if test -z "$exe"
+        echo 'pipelog: command not found' >&2
+        return 127
+    end
+
+    set -l has_cmd 0
+    set -l has_title 0
+    for a in $argv
+        if test "$a" = --cmd
+            set has_cmd 1
+        end
+        if test "$a" = --title
+            set has_title 1
+        end
+        string match -q -- -t "$a"
+        and set has_title 1
+    end
+
+    if not test -t 0
+        if test $has_cmd -eq 0; and test -n "$PIPELOG_LAST_COMMAND"
+            set -l left (string replace -r '\s*\|\s*[^|]*pipelog(\.exe)?(\b.*)?$' '' "$PIPELOG_LAST_COMMAND")
+            set left (string trim "$left")
+            if test -n "$left"
+                if test $has_title -eq 1
+                    command pipelog --cmd "$left" $argv
+                else
+                    command pipelog --cmd "$left" --title "$left" $argv
+                end
+                return $status
+            end
+        end
+    end
+
+    command pipelog $argv
+end
 "#;
             println!("{}", snippet);
         }
@@ -296,7 +404,7 @@ function pipelog {
         }
         _ => {
             return Err(anyhow::anyhow!(
-                "Unsupported shell '{}'. Use: pipelog init <zsh|powershell>",
+                "Unsupported shell '{}'. Use: pipelog init <zsh|bash|fish|powershell> (or pwsh)",
                 shell
             ));
         }
@@ -473,5 +581,25 @@ fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         format!("{}…", &s[..max - 1])
+    }
+}
+
+#[cfg(test)]
+mod init_shell_tests {
+    use super::print_shell_init;
+
+    #[test]
+    fn posix_explicit_init_errors_with_guidance() {
+        let msg = print_shell_init("dash").unwrap_err().to_string();
+        assert!(
+            msg.contains("POSIX shells") && msg.contains("pipelog init"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn bash_fish_snippet_arms_execute() {
+        print_shell_init("bash").unwrap();
+        print_shell_init("fish").unwrap();
     }
 }

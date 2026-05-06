@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useAuthStore } from './api';
 import { Login } from './pages/Login';
@@ -10,6 +11,20 @@ import { Landing } from './pages/Landing';
 import { GetStarted } from './pages/GetStarted';
 import { InstallCli } from './pages/InstallCli';
 
+const GA_MEASUREMENT_ID = 'G-KLZKM0CNLB';
+
+function GoogleAnalytics() {
+  const location = useLocation();
+  useEffect(() => {
+    const gtag = window.gtag;
+    if (typeof gtag !== 'function') return;
+    gtag('config', GA_MEASUREMENT_ID, {
+      page_path: location.pathname + location.search + location.hash,
+    });
+  }, [location]);
+  return null;
+}
+
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
   return token ? <>{children}</> : <Navigate to="/login" replace />;
@@ -18,6 +33,7 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <BrowserRouter>
+      <GoogleAnalytics />
       <Toaster position="bottom-right" toastOptions={{
         style: { background: '#0f0f0f', color: '#e5e5e5', border: '1px solid #2a2a2a' }
       }} />
