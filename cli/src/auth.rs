@@ -1,4 +1,4 @@
-use crate::config;
+use crate::{config, shell_detect};
 use anyhow::{anyhow, Result};
 use colored::*;
 
@@ -40,13 +40,7 @@ pub async fn login() -> Result<()> {
     config::save(&cfg)?;
 
     println!("{} Logged in as {}", "✓".green().bold(), email.cyan());
-    println!();
-    println!(
-        "{}",
-        "Run once (zsh — captures command in pipelines):".dimmed()
-    );
-    println!("{}", "pipelog init zsh >> ~/.zshrc".cyan());
-    println!("{}", "source ~/.zshrc".cyan());
+    shell_detect::hint_for_detected_shell();
     Ok(())
 }
 
