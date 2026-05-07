@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+#
+# Prefer saving the script then running it so stdin is not tied to curl's pipe:
+#   curl -fsSL …/install.sh -o install.sh && bash install.sh
+# (Also avoids edge cases for child processes inheriting a closed pipe FD.)
 
 REPO="${PIPELOG_REPO:-DaltonVector-FOSS/pipelog}"
 VERSION="${PIPELOG_VERSION:-latest}"
@@ -55,10 +59,118 @@ desired_normalized() {
   normalize_version "$raw"
 }
 
-installed_version() {
-  local bin="$1" out
-  out="$("$bin" --version 2>/dev/null)" || err "Failed to read version from ${bin}"
-  printf '%s' "$out" | awk 'NF { print $NF }'
+# Prints a semver-like token from the first line of `pipelog --version`; returns 0 on success.
+# Must not call err/exit: this function is used inside command substitutions.
+read_installed_version() {
+  local bin="$1" out line token
+  out="$("$bin" --version </dev/null 2>/dev/null)" || return 1
+  line="$(printf '%s' "$out" | awk 'NR == 1 { print; exit }')"
+  [ -n "$line" ] || return 1
+  token="$(
+    printf '%s' "$line" | awk '{
+      for (i = NF; i >= 1; i--) {
+        if ($i ~ /^v?[0-9]+\.[0-9]+\.[0-9]+([.+~-][0-9A-Za-z.-]*)?$/) {
+          print $i
+          exit
+        }
+      }
+      exit 1
+    }'
+  )" || return 1
+  [ -n "$token" ] || return 1
+  printf '%s' "$token"
+}
+
+verify_installed_binary() {
+  local bin="$1" triple="$2"
+  "$bin" --version </dev/null >/dev/null 2>&1 ||
+    err "Installed binary does not run on this system (${triple}). The release asset '${BIN_NAME}-${triple}.tar.gz' may be the wrong OS or CPU (e.g. a macOS binary uploaded as linux-gnu). Maintain builds with: cargo build --release --target ${triple} (or cross build --release --target ${triple})."
+}
+
+# When file(1) is available, reject obviously wrong payloads before overwriting ${INSTALL_DIR}.
+validate_extracted_binary() {
+  local path="$1" triple="$2" desc
+  command -v file >/dev/null 2>&1 || return 0
+  desc="$(file -b "$path" 2>/dev/null || true)"
+  [ -n "$desc" ] || return 0
+
+  case "$triple" in
+    aarch64-unknown-linux-gnu)
+      case "$desc" in
+        *Mach-O*)
+          err "Extracted binary is Mach-O, not Linux ELF (${triple}). The asset '${BIN_NAME}-${triple}.tar.gz' may have been packaged incorrectly."
+          ;;
+        *ELF*)
+          case "$desc" in
+            *x86-64* | *Intel\ 80386*)
+              err "Extracted ELF is x86-64 but this install expects AArch64 (${triple}). Check uname -m and the release tarball."
+              ;;
+            *aarch64* | *ARM\ aarch64*) ;;
+            *)
+              err "Extracted ELF does not match ${triple}. file(1): ${desc}"
+              ;;
+          esac
+          ;;
+        *ASCII\ text* | *Unicode\ text* | *shell\ script*)
+          err "Extracted file is not an executable binary (${desc})."
+          ;;
+        *)
+          err "Expected ELF executable for ${triple}; file(1) reports: ${desc}"
+          ;;
+      esac
+      ;;
+    x86_64-unknown-linux-gnu)
+      case "$desc" in
+        *Mach-O*)
+          err "Extracted binary is Mach-O, not Linux ELF (${triple}). The asset '${BIN_NAME}-${triple}.tar.gz' may have been packaged incorrectly."
+          ;;
+        *ELF*)
+          case "$desc" in
+            *aarch64* | *ARM\ aarch64*)
+              err "Extracted ELF is AArch64 but this install expects x86-64 (${triple}). Check uname -m and the release tarball."
+              ;;
+            *x86-64*) ;;
+            *)
+              err "Extracted ELF does not match ${triple}. file(1): ${desc}"
+              ;;
+          esac
+          ;;
+        *ASCII\ text* | *Unicode\ text* | *shell\ script*)
+          err "Extracted file is not an executable binary (${desc})."
+          ;;
+        *)
+          err "Expected ELF executable for ${triple}; file(1) reports: ${desc}"
+          ;;
+      esac
+      ;;
+    aarch64-apple-darwin)
+      case "$desc" in
+        *Mach-O*)
+          case "$desc" in *arm64* | *aarch64*) ;; *)
+            err "Mach-O does not look like arm64 for ${triple}: ${desc}"
+            ;;
+          esac
+          ;;
+        *)
+          err "Expected Mach-O for ${triple}; file(1) reports: ${desc}"
+          ;;
+      esac
+      ;;
+    x86_64-apple-darwin)
+      case "$desc" in
+        *Mach-O*)
+          case "$desc" in *x86_64*) ;; *)
+            err "Mach-O does not look like x86_64 for ${triple}: ${desc}"
+            ;;
+          esac
+          ;;
+        *)
+          err "Expected Mach-O for ${triple}; file(1) reports: ${desc}"
+          ;;
+      esac
+      ;;
+    *) ;;
+  esac
 }
 
 detect_os() {
@@ -101,20 +213,22 @@ download_url() {
   fi
 }
 
+# Must not call err on failure when used inside $( ): subshell-only exit breaks set -e semantics.
 extract_binary() {
-  archive_path="$1"
-  out_dir="$2"
+  local archive_path="$1"
+  local out_dir="$2"
+  local candidate
 
-  tar -xzf "$archive_path" -C "$out_dir"
+  tar -xzf "$archive_path" -C "$out_dir" || return 1
 
   for candidate in "${out_dir}/${BIN_NAME}" "${out_dir}"/*/"${BIN_NAME}"; do
     if [ -f "$candidate" ]; then
       printf '%s' "$candidate"
-      return
+      return 0
     fi
   done
 
-  err "Archive extracted, but '${BIN_NAME}' was not found."
+  return 1
 }
 
 install_binary() {
@@ -152,12 +266,20 @@ main() {
     log "Installing ${BIN_NAME} (custom download URL; version check skipped)..."
   elif [ -x "$bin_path" ]; then
     d="$(desired_normalized)"
-    c="$(normalize_version "$(installed_version "$bin_path")")"
-    if [ "$c" = "$d" ]; then
-      log "${BIN_NAME} is already installed and up to date (${c})."
-      exit 0
+    if cur="$(read_installed_version "$bin_path")"; then
+      c="$(normalize_version "$cur")"
+      if [ -n "$c" ] && [ "$c" = "$d" ]; then
+        log "${BIN_NAME} is already installed and up to date (${c})."
+        exit 0
+      fi
+      if [ -n "$c" ]; then
+        log "${BIN_NAME} is installed (version ${c}); updating to ${d}..."
+      else
+        log "${BIN_NAME} is installed but the installed version could not be parsed; updating to ${d}..."
+      fi
+    else
+      log "${BIN_NAME} exists at ${bin_path} but is not runnable on this system (wrong architecture, corrupt install, or not ${BIN_NAME}); reinstalling..."
     fi
-    log "${BIN_NAME} is installed (${c}); updating to ${d}..."
   else
     log "Installing ${BIN_NAME}..."
   fi
@@ -183,8 +305,11 @@ main() {
   curl -fsSL "$url" -o "$archive" || err "Failed to download release asset from: $url"
   [ -s "$archive" ] || err "Downloaded archive is empty."
 
-  extracted_bin="$(extract_binary "$archive" "$work_dir")"
+  extracted_bin="$(extract_binary "$archive" "$work_dir")" ||
+    err "Could not extract '${BIN_NAME}' from the downloaded archive."
+  validate_extracted_binary "$extracted_bin" "$target"
   install_binary "$extracted_bin"
+  verify_installed_binary "$bin_path" "$target"
 
   log "Installed ${BIN_NAME} to ${INSTALL_DIR}/${BIN_NAME}"
   if [ "$had_existing_install" = false ]; then
