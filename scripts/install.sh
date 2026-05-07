@@ -55,10 +55,20 @@ desired_normalized() {
   normalize_version "$raw"
 }
 
-installed_version() {
-  local bin="$1" out
-  out="$("$bin" --version 2>/dev/null)" || err "Failed to read version from ${bin}"
-  printf '%s' "$out" | awk 'NF { print $NF }'
+# Prints the last token from `pipelog --version` on stdout; returns 0 on success.
+# Must not call err/exit: this function is used inside command substitutions.
+read_installed_version() {
+  local bin="$1" out token
+  out="$("$bin" --version 2>/dev/null)" || return 1
+  token="$(printf '%s' "$out" | awk 'NF { print $NF }')"
+  [ -n "$token" ] || return 1
+  printf '%s' "$token"
+}
+
+verify_installed_binary() {
+  local bin="$1" triple="$2"
+  "$bin" --version >/dev/null 2>&1 ||
+    err "Installed binary does not run on this system (${triple}). The release asset '${BIN_NAME}-${triple}.tar.gz' may be the wrong OS or CPU (e.g. a macOS binary uploaded as linux-gnu). Maintain builds with: cargo build --release --target ${triple} (or cross build --release --target ${triple})."
 }
 
 detect_os() {
@@ -101,20 +111,22 @@ download_url() {
   fi
 }
 
+# Must not call err on failure when used inside $( ): subshell-only exit breaks set -e semantics.
 extract_binary() {
-  archive_path="$1"
-  out_dir="$2"
+  local archive_path="$1"
+  local out_dir="$2"
+  local candidate
 
-  tar -xzf "$archive_path" -C "$out_dir"
+  tar -xzf "$archive_path" -C "$out_dir" || return 1
 
   for candidate in "${out_dir}/${BIN_NAME}" "${out_dir}"/*/"${BIN_NAME}"; do
     if [ -f "$candidate" ]; then
       printf '%s' "$candidate"
-      return
+      return 0
     fi
   done
 
-  err "Archive extracted, but '${BIN_NAME}' was not found."
+  return 1
 }
 
 install_binary() {
@@ -152,12 +164,16 @@ main() {
     log "Installing ${BIN_NAME} (custom download URL; version check skipped)..."
   elif [ -x "$bin_path" ]; then
     d="$(desired_normalized)"
-    c="$(normalize_version "$(installed_version "$bin_path")")"
-    if [ "$c" = "$d" ]; then
-      log "${BIN_NAME} is already installed and up to date (${c})."
-      exit 0
+    if cur="$(read_installed_version "$bin_path")"; then
+      c="$(normalize_version "$cur")"
+      if [ "$c" = "$d" ]; then
+        log "${BIN_NAME} is already installed and up to date (${c})."
+        exit 0
+      fi
+      log "${BIN_NAME} is installed (${c}); updating to ${d}..."
+    else
+      log "${BIN_NAME} exists at ${bin_path} but is not runnable on this system (wrong architecture, corrupt install, or not ${BIN_NAME}); reinstalling..."
     fi
-    log "${BIN_NAME} is installed (${c}); updating to ${d}..."
   else
     log "Installing ${BIN_NAME}..."
   fi
@@ -183,8 +199,10 @@ main() {
   curl -fsSL "$url" -o "$archive" || err "Failed to download release asset from: $url"
   [ -s "$archive" ] || err "Downloaded archive is empty."
 
-  extracted_bin="$(extract_binary "$archive" "$work_dir")"
+  extracted_bin="$(extract_binary "$archive" "$work_dir")" ||
+    err "Could not extract '${BIN_NAME}' from the downloaded archive."
   install_binary "$extracted_bin"
+  verify_installed_binary "$bin_path" "$target"
 
   log "Installed ${BIN_NAME} to ${INSTALL_DIR}/${BIN_NAME}"
   if [ "$had_existing_install" = false ]; then
