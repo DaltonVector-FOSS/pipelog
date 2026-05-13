@@ -6,6 +6,8 @@ import './types.d';
 
 import { authRoutes } from './routes/auth';
 import { entryRoutes } from './routes/entries';
+// NEW: clipboard sync
+import { syncClipboardRoutes } from './routes/syncClipboard';
 import { workspaceRoutes } from './routes/workspaces';
 import { registerErrorHandler } from './middleware/errorHandler';
 
@@ -40,6 +42,8 @@ registerErrorHandler(app);
 // Routes
 app.register(authRoutes);
 app.register(entryRoutes);
+// NEW: clipboard sync
+app.register(syncClipboardRoutes);
 app.register(workspaceRoutes);
 
 // Health check

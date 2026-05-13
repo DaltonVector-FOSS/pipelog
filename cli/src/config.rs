@@ -18,6 +18,8 @@ pub struct Config {
     pub web_url: String,
     pub auth_token: Option<String>,
     pub default_workspace: Option<String>,
+    #[serde(default)]
+    pub sync_clipboard: bool,
 }
 
 impl Default for Config {
@@ -27,6 +29,7 @@ impl Default for Config {
             web_url: DEFAULT_WEB_URL.to_string(),
             auth_token: None,
             default_workspace: None,
+            sync_clipboard: false,
         }
     }
 }

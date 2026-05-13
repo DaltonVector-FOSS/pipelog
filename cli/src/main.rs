@@ -1,7 +1,9 @@
 mod api;
 mod auth;
 mod capture;
+mod clipboard; // NEW: clipboard sync
 mod config;
+mod daemon; // NEW: clipboard sync
 mod runner;
 mod shell_detect;
 
@@ -113,6 +115,23 @@ enum Commands {
         #[arg(trailing_var_arg = true, required = true, num_args = 1..)]
         argv: Vec<String>,
     },
+    /// Clipboard sync daemon
+    Sync {
+        #[command(subcommand)]
+        action: SyncAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum SyncAction {
+    /// Start background clipboard sync daemon
+    Start,
+    /// Stop clipboard sync daemon
+    Stop,
+    /// Show clipboard sync daemon status
+    Status,
+    #[command(name = "__run", hide = true)]
+    RunHidden,
 }
 
 #[derive(Subcommand)]
@@ -183,6 +202,45 @@ async fn main() -> anyhow::Result<()> {
             let code = runner::run_command(argv, title, tags, share).await?;
             std::process::exit(code);
         }
+        // NEW: clipboard sync
+        Some(Commands::Sync { action }) => match action {
+            SyncAction::Start => {
+                let cfg = config::load()?;
+                if cfg.auth_token.is_none() {
+                    eprintln!("Not logged in. Run `pipelog auth login`");
+                    std::process::exit(1);
+                }
+                let bin_path = std::env::current_exe()?;
+                daemon::start(&bin_path)?;
+            }
+            SyncAction::Stop => {
+                daemon::stop()?;
+            }
+            SyncAction::Status => {
+                println!("{}", daemon::status_line());
+            }
+            SyncAction::RunHidden => {
+                let cfg = config::load()?;
+                let token = match &cfg.auth_token {
+                    Some(t) => t.clone(),
+                    None => {
+                        eprintln!("Not logged in. Run `pipelog auth login`");
+                        std::process::exit(1);
+                    }
+                };
+                let api_url = cfg.api_url.clone();
+                let sync_clipboard = cfg.sync_clipboard;
+                loop {
+                    match clipboard::watch_and_sync(sync_clipboard, &token, &api_url).await {
+                        Ok(()) => break,
+                        Err(e) => {
+                            eprintln!("clipboard sync: {}", e);
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
+                    }
+                }
+            }
+        },
     }
 
     Ok(())
