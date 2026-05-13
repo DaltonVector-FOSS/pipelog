@@ -1,5 +1,6 @@
-# Build release tarballs on real OS/arch runners so asset names match binaries.
+# Build release archives on real OS/arch runners so asset names match binaries.
 # Do not repackage a macOS build as aarch64-unknown-linux-gnu — Linux installs need ELF.
+# Unix assets are .tar.gz; Windows ships .zip (native tooling).
 
 name: Release
 
@@ -30,6 +31,8 @@ jobs:
             target: aarch64-apple-darwin
           - runner: macos-latest
             target: x86_64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.runner }}
 
@@ -47,7 +50,8 @@ jobs:
       - name: cargo build --release
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package tarball
+      - name: Package tarball (Unix)
+        if: runner.os != 'Windows'
         env:
           TARGET: ${{ matrix.target }}
           COPYFILE_DISABLE: "1"
@@ -56,10 +60,26 @@ jobs:
           chmod +x pipelog
           tar czf "pipelog-${TARGET}.tar.gz" pipelog
 
+      - name: Package zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          Copy-Item "target/$env:TARGET/release/pipelog.exe" pipelog.exe
+          Compress-Archive -LiteralPath pipelog.exe -DestinationPath "pipelog-$($env:TARGET).zip" -Force
+
       - uses: actions/upload-artifact@v4
+        if: runner.os != 'Windows'
         with:
           name: asset-${{ matrix.target }}
           path: cli/pipelog-${{ matrix.target }}.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: asset-${{ matrix.target }}
+          path: cli/pipelog-${{ matrix.target }}.zip
 
   github-release:
     needs: build
@@ -73,6 +93,8 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: assets/*.tar.gz
+          files: |
+            assets/*.tar.gz
+            assets/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
