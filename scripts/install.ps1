@@ -10,6 +10,7 @@
   Set PIPELOG_DOWNLOAD_URL to bypass GitHub URL logic (version check skipped).
   Override asset triple with PIPELOG_WINDOWS_TRIPLE (e.g. x86_64-pc-windows-msvc) if you ship MSVC builds instead.
   Set PIPELOG_UPDATE_PATH=0 to skip adding the install dir to your user PATH.
+  If an existing pipelog.exe cannot be executed (e.g. Application Control / Smart App Control blocks it), the script skips the version check and reinstalls over that path.
 
 .EXAMPLE
   # PowerShell 7+ (or Windows Terminal default):
@@ -80,21 +81,37 @@ function Get-DesiredNormalized {
 }
 
 # Last whitespace-separated token of `pipelog --version` output (matches install.sh installed_version awk).
-function Get-InstalledVersionLastToken([string] $ExePath) {
+# Returns $null if the binary cannot be run or output cannot be parsed (caller may reinstall).
+function TryGet-InstalledVersionLastToken([string] $ExePath, [ref] $Detail) {
+    $Detail.Value = $null
     try {
-        $output = (& $ExePath @('--version') 2>&1 | ForEach-Object { "$_" }) -join "`n"
+        $pieces = @(
+            & $ExePath @('--version') 2>&1 | ForEach-Object {
+                if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                    return $_.Exception.Message
+                }
+                return "$_"
+            }
+        )
+        $output = ($pieces -join "`n").Trim()
+        if ($output -match '(?i)application control|blocked this file|has been blocked|access is denied') {
+            $Detail.Value = $output
+            return $null
+        }
+        if (-not $output) {
+            $Detail.Value = 'empty output'
+            return $null
+        }
+        $tokens = @($output -split '\s+' | Where-Object { $_ })
+        if ($tokens.Length -eq 0) {
+            $Detail.Value = "unparseable: $output"
+            return $null
+        }
+        return $tokens[$tokens.Length - 1]
     } catch {
-        Fail "Failed to read version from ${ExePath}: $_"
+        $Detail.Value = "$_"
+        return $null
     }
-    $output = $output.Trim()
-    if (-not $output) {
-        Fail "Failed to read version from ${ExePath} (empty output)."
-    }
-    $tokens = @($output -split '\s+' | Where-Object { $_ })
-    if ($tokens.Length -eq 0) {
-        Fail "Failed to parse version from ${ExePath}: $output"
-    }
-    return $tokens[$tokens.Length - 1]
 }
 
 # Mirrors Rust dirs::config_dir() + pipelog/config.json on Windows (%APPDATA%\Roaming).
@@ -183,13 +200,24 @@ function Main {
     if (-not $DownloadUrl) {
         if (Test-Path -LiteralPath $dst) {
             $desired = Get-DesiredNormalized
-            $rawInstalled = Get-InstalledVersionLastToken $dst
-            $current = Normalize-Version $rawInstalled
-            if ($current -eq $desired) {
-                Write-Info "$BinName is already installed and up to date ($current)."
-                exit 0
+            $verDetail = $null
+            $rawInstalled = TryGet-InstalledVersionLastToken $dst ([ref] $verDetail)
+            if ($null -ne $rawInstalled) {
+                $current = Normalize-Version $rawInstalled
+                if ($current -eq $desired) {
+                    Write-Info "$BinName is already installed and up to date ($current)."
+                    exit 0
+                }
+                Write-Info "$BinName is installed ($current); updating to $desired..."
+            } else {
+                $hint = $verDetail
+                if ($hint) {
+                    Write-Warning "Could not run existing $BinName to check version ($hint). Re-downloading to $dst."
+                } else {
+                    Write-Warning "Could not read version from existing $BinName. Re-downloading to $dst."
+                }
+                Write-Info "Installing $desired..."
             }
-            Write-Info "$BinName is installed ($current); updating to $desired..."
         }
     } else {
         Write-Info "Installing $BinName (custom download URL; version check skipped)..."
